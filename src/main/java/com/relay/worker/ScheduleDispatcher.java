@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -22,12 +23,19 @@ public class ScheduleDispatcher {
 
     private final ScheduleRepository schedules;
     private final RunService runService;
+    /** A schedule whose trigger failed is retried after this long instead of waiting for its next cron window. */
+    static final long RETRY_AFTER_FAILURE_SECONDS = 60;
+
     private final TransactionTemplate tx;
+    private final TransactionTemplate attempt;
 
     public ScheduleDispatcher(ScheduleRepository schedules, RunService runService, PlatformTransactionManager txManager) {
         this.schedules = schedules;
         this.runService = runService;
         this.tx = new TransactionTemplate(txManager);
+        // each firing runs in its own savepoint, so one failing schedule rolls back only itself
+        this.attempt = new TransactionTemplate(txManager);
+        this.attempt.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     /** @return number of runs created */
@@ -36,13 +44,16 @@ public class ScheduleDispatcher {
             int count = 0;
             for (ScheduleRepository.DueSchedule s : schedules.lockDue()) {
                 try {
-                    runService.triggerSchedule(s.workflowId());
+                    attempt.executeWithoutResult(st -> runService.triggerSchedule(s.workflowId()));
                     count++;
+                    // No catch-up: the next fire is computed from now, skipping any missed windows.
+                    schedules.advance(s.workflowId(), WorkflowService.nextFire(s.cron(), Instant.now()));
                 } catch (RuntimeException e) {
-                    log.warn("Schedule for workflow {} could not fire: {}", s.workflowId(), e.getMessage());
+                    // The firing did not happen, so it is not consumed: retry shortly rather than skipping the window.
+                    log.warn("Schedule for workflow {} could not fire (retrying in {}s): {}", s.workflowId(),
+                            RETRY_AFTER_FAILURE_SECONDS, e.getMessage());
+                    schedules.advance(s.workflowId(), Instant.now().plusSeconds(RETRY_AFTER_FAILURE_SECONDS));
                 }
-                // No catch-up: the next fire is computed from now, skipping any missed windows.
-                schedules.advance(s.workflowId(), WorkflowService.nextFire(s.cron(), Instant.now()));
             }
             return count;
         });

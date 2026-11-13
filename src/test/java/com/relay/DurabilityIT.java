@@ -115,19 +115,32 @@ class DurabilityIT extends AbstractIntegrationTest {
         String wf = createAndPublish(chain("wf_dur_lease", null));
         String run = trigger(wf, "{}");
 
-        var first = queue.claim("worker-1", 1);
+        var first = queue.claim("worker-1", 2);
         assertThat(first).isPresent();
         assertThat(first.get().runId()).isEqualTo(run);
-        assertThat(queue.claim("worker-2", 1)).as("leased jobs are invisible to others").isEmpty();
-        assertThat(queue.heartbeat(run, "worker-2", 1)).as("only the owner can extend a lease").isFalse();
-        assertThat(queue.heartbeat(run, "worker-1", 2)).isTrue();
+        assertThat(queue.claim("worker-2", 2)).as("leased jobs are invisible to others").isEmpty();
+        assertThat(queue.heartbeat(run, "worker-2", 6)).as("only the owner can extend a lease").isFalse();
+        assertThat(queue.heartbeat(run, "worker-1", 6)).as("the owner extends the lease from 2s to 6s").isTrue();
 
-        Thread.sleep(1300);
-        assertThat(queue.claim("worker-2", 1)).as("heartbeat extended the lease past 1s").isEmpty();
-        Thread.sleep(1000);
-        var second = queue.claim("worker-2", 1);
-        assertThat(second).as("an expired lease (crashed worker) is reclaimed").isPresent();
-        assertThat(second.get().claimCount()).isEqualTo(2);
+        // well past the original 2s expiry but well before the extended 6s one: still leased
+        Thread.sleep(2600);
+        assertThat(queue.claim("worker-2", 2)).as("the heartbeat kept the lease alive past its first expiry").isEmpty();
+
+        // the lease then expires on its own; wait for that state instead of guessing a sleep length
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(15)).pollInterval(java.time.Duration.ofMillis(200))
+                .until(() -> queue.claim("worker-2", 2).isPresent());
+        assertThat(queue.heartbeat(run, "worker-1", 6)).as("a stale worker cannot revive an expired lease").isFalse();
+        assertThat(queue.deleteOwned(run, "worker-1")).as("nor delete a job it no longer owns").isFalse();
+    }
+
+    @Test
+    void aStaleWorkerCannotRescheduleTheJobOfTheWorkerThatTookOver() {
+        String wf = createAndPublish(chain("wf_dur_stale", null));
+        String run = trigger(wf, "{}");
+        assertThat(queue.claim("worker-1", 300)).isPresent();
+        assertThat(queue.rescheduleOwned(run, "worker-2", java.time.Instant.now())).as("not the owner").isFalse();
+        assertThat(queue.rescheduleOwned(run, "worker-1", java.time.Instant.now())).as("the owner hands the job back").isTrue();
+        assertThat(queue.claim("worker-2", 300)).isPresent();
     }
 
     @Test
@@ -143,20 +156,25 @@ class DurabilityIT extends AbstractIntegrationTest {
     @Test
     void twoExecutorsRacingOnTheSameRunNeverDuplicateASideEffect() throws Exception {
         String wf = createAndPublish(chain("wf_dur_race", null));
-        String run = trigger(wf, "{}");
-        ExecutorService pool = Executors.newFixedThreadPool(2);
-        try {
-            List<Future<RunExecutor.Outcome>> results = new ArrayList<>();
-            for (int i = 0; i < 2; i++) results.add(pool.submit(() -> executor.execute(run, WorkerLease.ALWAYS)));
-            for (Future<RunExecutor.Outcome> f : results) f.get();
-        } finally {
-            pool.shutdownNow();
-        }
-        if (runs.findById(run).orElseThrow().status() != RunStatus.SUCCEEDED) executor.execute(run, WorkerLease.ALWAYS);
+        int rounds = 12; // the interleaving differs every time, so repeat it to give a rare race a chance to show
+        for (int round = 0; round < rounds; round++) {
+            String run = trigger(wf, "{}");
+            ExecutorService pool = Executors.newFixedThreadPool(2);
+            try {
+                List<Future<RunExecutor.Outcome>> results = new ArrayList<>();
+                for (int i = 0; i < 2; i++) results.add(pool.submit(() -> executor.execute(run, WorkerLease.ALWAYS)));
+                for (Future<RunExecutor.Outcome> f : results) f.get();
+            } finally {
+                pool.shutdownNow();
+            }
+            if (runs.findById(run).orElseThrow().status() != RunStatus.SUCCEEDED) executor.execute(run, WorkerLease.ALWAYS);
 
-        assertThat(runs.findById(run).orElseThrow().status()).isEqualTo(RunStatus.SUCCEEDED);
-        assertThat(steps.findByRunId(run)).extracting(StepRecord::sequence).containsExactly(1, 2, 3);
-        assertThat(WORLD.executed("chat.message")).isEqualTo(3);
+            assertThat(runs.findById(run).orElseThrow().status()).as("round %d", round).isEqualTo(RunStatus.SUCCEEDED);
+            assertThat(steps.findByRunId(run)).as("round %d", round).extracting(StepRecord::sequence).containsExactly(1, 2, 3);
+        }
+        assertThat(WORLD.executed("chat.message")).as("three effects per run, never a fourth").isEqualTo(3L * rounds);
+        assertThat(WORLD.ledger().stream().filter(e -> !e.replayed()).map(e -> e.idempotencyKey()).distinct().count())
+                .as("every executed effect carries its own stable key").isEqualTo(3L * rounds);
     }
 
     @Test

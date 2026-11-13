@@ -2,6 +2,7 @@ package com.relay.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.relay.domain.AiUsage;
 import com.relay.domain.ApprovalRecord;
 import com.relay.domain.ApprovalStatus;
 import com.relay.domain.RelayException;
@@ -73,7 +74,8 @@ public class RunService {
         if (!SecretHasher.matches(presentedSecret, version.webhookSecretHash())) {
             throw new RelayException(HttpStatus.UNAUTHORIZED, "invalid_webhook_secret", "Missing or invalid X-Relay-Secret");
         }
-        return start(workflowId, "webhook", body == null || body.isNull() ? JsonNodeFactory.instance.objectNode() : body, null);
+        // the version whose secret was just checked is the version that runs (a concurrent publish cannot swap it)
+        return start(version, "webhook", body == null || body.isNull() ? JsonNodeFactory.instance.objectNode() : body, null);
     }
 
     @Transactional
@@ -87,6 +89,11 @@ public class RunService {
             workflows.findById(workflowId).orElseThrow(() -> RelayException.notFound("Workflow", workflowId));
             throw RelayException.conflict("workflow_not_published", "Workflow '" + workflowId + "' has not been published; publish it first");
         }
+        return start(version, triggerType, input, replayOf);
+    }
+
+    private RunRecord start(WorkflowVersionRecord version, String triggerType, JsonNode input, String replayOf) {
+        String workflowId = version.workflowId();
         String runId = newRunId();
         runs.insert(runId, workflowId, version.version(), version.definition(), triggerType, input, replayOf);
         queue.enqueue(runId);
@@ -174,9 +181,14 @@ public class RunService {
         if (failed != null) {
             for (StepRecord s : history) {
                 if (s.sequence() >= failed.sequence()) break;
-                steps.insert(newId, s.sequence(), s.nodeId(), s.nodeType(), StepStatus.RUNNING, s.idempotencyKey(), null, null, s.resolvedInput());
-                steps.markSucceeded(newId, s.sequence(), s.output() == null ? JsonNodeFactory.instance.objectNode() : s.output(),
-                        s.attempt(), new StepRepository.AiUsage(s.tokensPrompt(), s.tokensCompletion(), s.aiAttempts()));
+                if (s.status() == StepStatus.SUCCEEDED) {
+                    steps.insert(newId, s.sequence(), s.nodeId(), s.nodeType(), StepStatus.RUNNING, s.idempotencyKey(), null, null, s.resolvedInput());
+                    steps.markSucceeded(newId, s.sequence(), s.output() == null ? JsonNodeFactory.instance.objectNode() : s.output(),
+                            s.attempt(), new AiUsage(s.tokensPrompt(), s.tokensCompletion(), s.aiAttempts()));
+                } else {
+                    // keep the original outcome (for example skipped): replay never relabels history as succeeded
+                    steps.insert(newId, s.sequence(), s.nodeId(), s.nodeType(), s.status(), s.idempotencyKey(), null, null, s.resolvedInput());
+                }
                 runs.bumpStepCounter(newId, s.nodeId());
                 if (s.approvalId() != null) copyApproval(newId, s, runId);
             }

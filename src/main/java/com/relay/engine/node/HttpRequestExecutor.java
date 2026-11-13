@@ -55,7 +55,13 @@ public class HttpRequestExecutor implements NodeExecutor {
             });
         }
         boolean mutating = !"GET".equals(method);
-        if (mutating && inv.idempotencyKey() != null) headers.put("Idempotency-Key", inv.idempotencyKey());
+        if (mutating) {
+            if (inv.idempotencyKey() == null || inv.idempotencyKey().isBlank()) {
+                throw new NodeExecutionException("idempotency_key_missing",
+                        "A mutating http_request must carry an idempotency key; refusing to send it without one", false);
+            }
+            headers.put("Idempotency-Key", inv.idempotencyKey());
+        }
 
         String body = null;
         if (mutating && p.has("body") && !p.get("body").isNull()) {

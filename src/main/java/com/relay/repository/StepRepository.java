@@ -1,6 +1,7 @@
 package com.relay.repository;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.relay.domain.AiUsage;
 import com.relay.domain.StepRecord;
 import com.relay.domain.StepStatus;
 import java.sql.ResultSet;
@@ -104,33 +105,32 @@ public class StepRepository {
                 .param("r", runId).param("s", sequence).param("a", attempt).update();
     }
 
-    public record AiUsage(Integer promptTokens, Integer completionTokens, JsonNode attempts) {
-        public static final AiUsage NONE = new AiUsage(null, null, null);
-    }
 
-    public void markSucceeded(String runId, int sequence, JsonNode output, int attempt, AiUsage ai) {
-        jdbc.sql("""
+    /** running -> succeeded. A stale or duplicate executor cannot overwrite a step that is already settled. Returns false then. */
+    public boolean markSucceeded(String runId, int sequence, JsonNode output, int attempt, AiUsage ai) {
+        return jdbc.sql("""
                 UPDATE steps SET status = 'succeeded', output = CAST(:o AS jsonb), attempt = :a,
                        tokens_prompt = :tp, tokens_completion = :tc, ai_attempts = CAST(:aa AS jsonb),
                        error = NULL, error_code = NULL,
                        finished_at = now(), duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::bigint
-                WHERE run_id = :r AND sequence = :s
+                WHERE run_id = :r AND sequence = :s AND status = 'running'
                 """)
                 .param("r", runId).param("s", sequence).param("o", json.write(output)).param("a", attempt)
                 .param("tp", ai.promptTokens()).param("tc", ai.completionTokens()).param("aa", json.write(ai.attempts()))
-                .update();
+                .update() > 0;
     }
 
-    public void markFailed(String runId, int sequence, String error, String errorCode, int attempt, AiUsage ai) {
-        jdbc.sql("""
+    /** running -> failed, with the same stale-writer protection as {@link #markSucceeded}. */
+    public boolean markFailed(String runId, int sequence, String error, String errorCode, int attempt, AiUsage ai) {
+        return jdbc.sql("""
                 UPDATE steps SET status = 'failed', error = :e, error_code = :c, attempt = :a,
                        tokens_prompt = :tp, tokens_completion = :tc, ai_attempts = CAST(:aa AS jsonb),
                        finished_at = now(), duration_ms = (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::bigint
-                WHERE run_id = :r AND sequence = :s
+                WHERE run_id = :r AND sequence = :s AND status = 'running'
                 """)
                 .param("r", runId).param("s", sequence).param("e", error).param("c", errorCode).param("a", attempt)
                 .param("tp", ai.promptTokens()).param("tc", ai.completionTokens()).param("aa", json.write(ai.attempts()))
-                .update();
+                .update() > 0;
     }
 
     /** waiting -> succeeded (delay elapsed or approval decided). Returns false if it was not waiting. */

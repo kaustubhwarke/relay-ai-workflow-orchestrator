@@ -11,6 +11,8 @@ import java.util.HexFormat;
  */
 public final class SecretHasher {
 
+    private static final java.util.regex.Pattern SHA256_HEX = java.util.regex.Pattern.compile("[0-9a-f]{64}");
+
     private SecretHasher() {}
 
     public static String sha256Hex(String value) {
@@ -23,7 +25,7 @@ public final class SecretHasher {
 
     /** Constant-time comparison of a presented secret against a stored hash. */
     public static boolean matches(String presentedSecret, String storedHashHex) {
-        if (presentedSecret == null || storedHashHex == null) return false;
+        if (presentedSecret == null || storedHashHex == null || !SHA256_HEX.matcher(storedHashHex).matches()) return false;
         byte[] a = sha256Hex(presentedSecret).getBytes(StandardCharsets.UTF_8);
         byte[] b = storedHashHex.getBytes(StandardCharsets.UTF_8);
         return MessageDigest.isEqual(a, b);

@@ -92,6 +92,9 @@ public class RunRepository {
 
     /** Moves a non-terminal run to a terminal state. Returns false if it was already terminal. */
     public boolean finish(String id, RunStatus status, JsonNode error, String cancelledReason) {
+        if (!status.isTerminal()) {
+            throw new IllegalArgumentException("finish() needs a terminal status, not " + status);
+        }
         return jdbc.sql("""
                 UPDATE runs SET status = :st, error = CAST(:err AS jsonb), cancelled_reason = :cr, finished_at = now()
                 WHERE id = :id AND status IN ('queued', 'running', 'waiting_approval')
@@ -100,7 +103,11 @@ public class RunRepository {
                 .update() > 0;
     }
 
+    /** Moves a run between non-terminal states; terminal states go through {@link #finish}, which also sets finished_at. */
     public boolean transition(String id, RunStatus from, RunStatus to) {
+        if (to.isTerminal()) {
+            throw new IllegalArgumentException("transition() is for non-terminal states; use finish() for " + to);
+        }
         return jdbc.sql("UPDATE runs SET status = :to WHERE id = :id AND status = :from")
                 .param("id", id).param("from", from.value()).param("to", to.value()).update() > 0;
     }

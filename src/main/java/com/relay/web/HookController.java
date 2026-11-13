@@ -46,6 +46,7 @@ public class HookController {
         JsonNode body;
         try {
             body = rawBody == null || rawBody.length == 0 ? mapper.createObjectNode() : mapper.readTree(rawBody);
+            if (body == null || body.isMissingNode()) body = mapper.createObjectNode(); // whitespace-only body
         } catch (java.io.IOException e) {
             throw RelayException.badRequest("invalid_json", "Webhook body is not valid JSON");
         }

@@ -10,4 +10,11 @@ public record WorkflowVersionRecord(
         JsonNode definition,
         String webhookSecretHash,
         Instant publishedAt) {
+
+    /** The definition is copied in and out: a published version never changes. */
+    public WorkflowVersionRecord {
+        definition = Json.copy(definition);
+    }
+
+    @Override public JsonNode definition() { return Json.copy(definition); }
 }

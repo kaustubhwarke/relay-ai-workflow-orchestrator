@@ -1,0 +1,6 @@
+# Local development and the demo stack only. Never activate this profile on an exposed deployment.
+relay:
+  security:
+    api-token: ${RELAY_API_TOKEN:relay-demo-token}
+  engine:
+    trace-store-ai-prompts: true   # show the resolved prompt in traces (useful for the demo; off by default)

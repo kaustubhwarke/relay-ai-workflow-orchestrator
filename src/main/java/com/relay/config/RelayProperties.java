@@ -49,8 +49,12 @@ public class RelayProperties {
     }
 
     public static class Security {
-        /** Token used for the built-in "demo" principal (all roles). */
-        private String apiToken = "relay-demo-token";
+        /**
+         * Token for the built-in all-roles principal. There is deliberately no default: the API refuses to start
+         * without a configured credential (see SecurityConfig). The well-known demo value is only accepted under
+         * the {@code dev} or {@code test} profiles.
+         */
+        private String apiToken = "";
         /** Optional extra principals for role separation (builder / operator / approver). */
         private List<TokenPrincipal> tokens = new ArrayList<>();
         public String getApiToken() { return apiToken; }
@@ -73,7 +77,10 @@ public class RelayProperties {
 
     public static class Worker {
         private boolean enabled = true;
-        /** Unique per live process. Leases held by a previous incarnation of this id are released on start. */
+        /**
+         * Must be unique per live process: leases held by a previous incarnation of this id are released on
+         * start. When blank, a unique id (host name plus a random suffix) is generated for this process.
+         */
         private String id = "";
         private int concurrency = 1;
         private long pollIntervalMs = 500;
@@ -105,8 +112,12 @@ public class RelayProperties {
         private int defaultMaxAttempts = 4;
         private long backoffBaseMs = 500;
         private long backoffMaxMs = 10_000;
-        private boolean traceStoreAiPrompts = true;
+        private boolean traceStoreAiPrompts = false;
         private int aiOutputExcerptChars = 2000;
+        /** Upper bound for an order_action refund amount; larger values are refused before anything is sent. */
+        private double maxRefundUsd = 10_000;
+        public double getMaxRefundUsd() { return maxRefundUsd; }
+        public void setMaxRefundUsd(double v) { this.maxRefundUsd = v; }
         public int getDefaultMaxSteps() { return defaultMaxSteps; }
         public void setDefaultMaxSteps(int v) { this.defaultMaxSteps = v; }
         public int getHardMaxSteps() { return hardMaxSteps; }

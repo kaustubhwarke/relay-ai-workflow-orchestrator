@@ -39,16 +39,21 @@ public class ExternalHttpClient {
     public Response call(String method, URI uri, Map<String, String> headers, String body, Duration timeout) {
         HttpRequest.Builder b = HttpRequest.newBuilder(uri).timeout(timeout);
         headers.forEach(b::header);
-        if (body != null && !headers.containsKey("Content-Type")) b.header("Content-Type", "application/json");
+        if (body != null && headers.keySet().stream().noneMatch("Content-Type"::equalsIgnoreCase)) {
+            b.header("Content-Type", "application/json");
+        }
         b.method(method, body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body));
         try {
-            HttpResponse<byte[]> resp = client.send(b.build(), HttpResponse.BodyHandlers.ofByteArray());
-            byte[] raw = resp.body();
-            if (raw.length > maxResponseBytes) {
-                throw new NodeExecutionException("response_too_large",
-                        "Response exceeded " + maxResponseBytes + " bytes", false);
+            HttpResponse<java.io.InputStream> resp = client.send(b.build(), HttpResponse.BodyHandlers.ofInputStream());
+            // read at most maxResponseBytes + 1 bytes, so an oversized or endless body never sits in memory
+            try (java.io.InputStream in = resp.body()) {
+                byte[] raw = in.readNBytes(maxResponseBytes + 1);
+                if (raw.length > maxResponseBytes) {
+                    throw new NodeExecutionException("response_too_large",
+                            "Response exceeded " + maxResponseBytes + " bytes", false);
+                }
+                return new Response(resp.statusCode(), new String(raw, StandardCharsets.UTF_8));
             }
-            return new Response(resp.statusCode(), new String(raw, StandardCharsets.UTF_8));
         } catch (HttpTimeoutException e) {
             throw new NodeExecutionException("dependency_timeout",
                     "Timed out calling " + uri.getHost() + ":" + uri.getPort() + " after " + timeout.toMillis() + " ms", true, e);

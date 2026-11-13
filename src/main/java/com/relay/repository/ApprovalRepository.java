@@ -64,6 +64,9 @@ public class ApprovalRepository {
 
     /** pending -> approved/rejected. Returns false if the approval was already decided (or cancelled). */
     public boolean decide(String id, ApprovalStatus decision, String decidedBy, String comment) {
+        if (decision != ApprovalStatus.APPROVED && decision != ApprovalStatus.REJECTED) {
+            throw new IllegalArgumentException("A decision must be approved or rejected, not " + decision);
+        }
         return jdbc.sql("""
                 UPDATE approvals SET status = :st, decided_by = :by, decided_at = now(), decision_comment = :c
                 WHERE id = :id AND status = 'pending'

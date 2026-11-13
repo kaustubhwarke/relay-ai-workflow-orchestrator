@@ -56,6 +56,7 @@ services:
     container_name: relay-api
     environment:
       <<: *relay-env
+      SPRING_PROFILES_ACTIVE: dev   # local demo stack: allows the demo token; use a real RELAY_API_TOKEN and drop "dev" when exposing it
       RELAY_WORKER_ENABLED: "false"
       RELAY_SEED_ENABLED: "true"
     ports:
@@ -71,7 +72,7 @@ services:
     container_name: relay-worker
     environment:
       <<: *relay-env
-      SPRING_PROFILES_ACTIVE: worker
+      SPRING_PROFILES_ACTIVE: worker,dev
       RELAY_WORKER_ID: worker-1
       PORT: "8081"
     depends_on:
@@ -86,7 +87,7 @@ services:
     profiles: ["scale"]
     environment:
       <<: *relay-env
-      SPRING_PROFILES_ACTIVE: worker
+      SPRING_PROFILES_ACTIVE: worker,dev
       RELAY_WORKER_ID: worker-2
       PORT: "8081"
     depends_on:

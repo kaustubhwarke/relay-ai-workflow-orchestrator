@@ -28,15 +28,17 @@ public class RetryPolicy {
 
     /** Delay to wait after {@code failedAttempt} (1-based) before the next attempt. */
     public long backoffMillis(Settings s, int failedAttempt) {
-        long exp = s.baseDelayMs() * (1L << Math.min(failedAttempt - 1, 20));
-        long capped = Math.min(s.maxDelayMs(), exp);
+        long capped = nominalBackoffMillis(s, failedAttempt);
         double jitter = 0.8 + ThreadLocalRandom.current().nextDouble() * 0.4;
         return Math.max(1, (long) (capped * jitter));
     }
 
     /** Deterministic (jitter-free) delay, used by tests and documentation. */
     public static long nominalBackoffMillis(Settings s, int failedAttempt) {
-        long exp = s.baseDelayMs() * (1L << Math.min(failedAttempt - 1, 20));
+        long factor = 1L << Math.min(Math.max(failedAttempt - 1, 0), 20);
+        long base = Math.max(s.baseDelayMs(), 0);
+        // saturate instead of overflowing: a huge base delay must hit the max, not wrap to a negative number
+        long exp = base > Long.MAX_VALUE / factor ? Long.MAX_VALUE : base * factor;
         return Math.min(s.maxDelayMs(), exp);
     }
 }

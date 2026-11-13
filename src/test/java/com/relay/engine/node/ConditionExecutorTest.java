@@ -13,8 +13,16 @@ class ConditionExecutorTest {
     private final ConditionExecutor executor = new ConditionExecutor();
 
     private boolean eval(String left, String op, String right) {
-        ObjectNode params = (ObjectNode) json("{\"left\":\"" + left + "\",\"op\":\"" + op + "\",\"right\":\"" + right + "\"}");
+        ObjectNode params = com.relay.TestSupport.MAPPER.createObjectNode();
+        params.put("left", left).put("op", op).put("right", right);
         return executor.execute(new NodeExecutor.NodeInvocation("r", "c", params, null, 1)).output().get("result").asBoolean();
+    }
+
+    @Test
+    void valuesContainingQuotesBackslashesAndNewlinesAreHandled() {
+        assertThat(eval("say \"hi\"", "equals", "say \"hi\"")).isTrue();
+        assertThat(eval("a\\b", "equals", "a\\b")).isTrue();
+        assertThat(eval("line1\nline2", "contains", "line2")).isTrue();
     }
 
     @Test

@@ -53,6 +53,16 @@ public class ApiExceptionHandler {
         return ResponseEntity.badRequest().body(ErrorBody.of("invalid_parameter", "Invalid value for parameter '" + e.getName() + "'", null));
     }
 
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorBody> missingParam(org.springframework.web.bind.MissingServletRequestParameterException e) {
+        return ResponseEntity.badRequest().body(ErrorBody.of("missing_parameter", "Missing required parameter '" + e.getParameterName() + "'", null));
+    }
+
+    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorBody> invalidArgument(org.springframework.web.bind.MethodArgumentNotValidException e) {
+        return ResponseEntity.badRequest().body(ErrorBody.of("invalid_request", "The request body failed validation", null));
+    }
+
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ErrorBody> method(HttpRequestMethodNotSupportedException e) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(ErrorBody.of("method_not_allowed", "HTTP method not allowed on this route", null));

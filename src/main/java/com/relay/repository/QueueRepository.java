@@ -52,7 +52,7 @@ public class QueueRepository {
     public boolean heartbeat(String runId, String workerId, int leaseSeconds) {
         return jdbc.sql("""
                 UPDATE queue_jobs SET locked_until = now() + make_interval(secs => CAST(:lease AS double precision))
-                WHERE run_id = :r AND locked_by = :w
+                WHERE run_id = :r AND locked_by = :w AND locked_until > now()
                 """)
                 .param("r", runId).param("w", workerId).param("lease", leaseSeconds).update() > 0;
     }
@@ -62,9 +62,9 @@ public class QueueRepository {
         jdbc.sql("DELETE FROM queue_jobs WHERE run_id = :r").param("r", runId).update();
     }
 
-    /** Removes the job only if the worker still owns it. */
+    /** Removes the job only if the worker still owns it and its lease has not expired. */
     public boolean deleteOwned(String runId, String workerId) {
-        return jdbc.sql("DELETE FROM queue_jobs WHERE run_id = :r AND locked_by = :w")
+        return jdbc.sql("DELETE FROM queue_jobs WHERE run_id = :r AND locked_by = :w AND locked_until > now()")
                 .param("r", runId).param("w", workerId).update() > 0;
     }
 
@@ -74,6 +74,19 @@ public class QueueRepository {
                 UPDATE queue_jobs SET available_at = :at, locked_by = NULL, locked_until = NULL, claim_count = 0 WHERE run_id = :r
                 """)
                 .param("r", runId).param("at", OffsetDateTime.ofInstant(availableAt, ZoneOffset.UTC)).update();
+    }
+
+    /**
+     * Like {@link #reschedule} but only when {@code workerId} still holds the job, so a stale worker can never
+     * touch the queue entry of the worker that took over.
+     */
+    public boolean rescheduleOwned(String runId, String workerId, Instant availableAt) {
+        return jdbc.sql("""
+                UPDATE queue_jobs SET available_at = :at, locked_by = NULL, locked_until = NULL, claim_count = 0
+                WHERE run_id = :r AND locked_by = :w
+                """)
+                .param("r", runId).param("w", workerId)
+                .param("at", OffsetDateTime.ofInstant(availableAt, ZoneOffset.UTC)).update() > 0;
     }
 
     /** Wakes a job that is waiting (not currently leased) so it is picked up immediately, e.g. after a cancel request. */

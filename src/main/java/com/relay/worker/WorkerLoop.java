@@ -71,11 +71,14 @@ public class WorkerLoop implements SmartLifecycle {
         this.scheduleDispatcher = scheduleDispatcher;
         this.metrics = metrics;
         this.workerId = props.getWorker().getId() == null || props.getWorker().getId().isBlank()
-                ? "worker-" + hostName()
+                ? "worker-" + hostName() + "-" + java.util.UUID.randomUUID().toString().substring(0, 8)
                 : props.getWorker().getId();
     }
 
     public String workerId() { return workerId; }
+
+    /** Runs this worker is executing right now (used by tests to wait until the worker is idle). */
+    public int activeRunCount() { return active.size(); }
 
     @Override
     public void start() {
@@ -181,7 +184,8 @@ public class WorkerLoop implements SmartLifecycle {
                 case FINISHED, WAITING_APPROVAL -> queue.deleteOwned(runId, workerId);
                 case DELAYED -> { /* job already rescheduled for the wake-up time */ }
                 case LEASE_LOST -> {
-                    if (!running) queue.reschedule(runId, Instant.now()); // graceful shutdown: hand over immediately
+                    // graceful shutdown: hand over immediately, but only while this worker still owns the job
+                    if (!running) queue.rescheduleOwned(runId, workerId, Instant.now());
                     else log.warn("Lost the lease on run {}; another worker owns it now", runId);
                 }
             }
@@ -190,7 +194,7 @@ public class WorkerLoop implements SmartLifecycle {
             // avoids a hot failure loop; the claim counter eventually quarantines a poison run.
             log.error("Executor crashed on run {}: {}", runId, e.toString(), e);
             try {
-                queue.reschedule(runId, Instant.now().plusSeconds(5));
+                queue.rescheduleOwned(runId, workerId, Instant.now().plusSeconds(5));
             } catch (RuntimeException ignored) {
                 // lease expiry will make the job claimable again
             }

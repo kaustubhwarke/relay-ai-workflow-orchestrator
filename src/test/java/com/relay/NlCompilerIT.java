@@ -97,11 +97,25 @@ class NlCompilerIT extends AbstractIntegrationTest {
     @Test
     void refusalsAreReturnedWithTheMissingCapabilitiesAndNothingIsStored() {
         model.responder = r -> "{\"refusal\":{\"reason\":\"No database or CRM connector exists.\",\"missing_capabilities\":[\"postgres query\",\"salesforce update\"]}}";
+        int workflowsBefore = get("/workflows").body().size();
         Reply r = compile("Scan Postgres and update Salesforce");
         assertThat(r.status()).isEqualTo(200);
         assertThat(r.body().path("refusal").path("reason").asText()).contains("No database");
         assertThat(r.body().path("refusal").path("missing_capabilities")).hasSize(2);
         assertThat(r.body().has("draft")).isFalse();
+        assertThat(get("/workflows").body().size()).as("a refusal stores nothing").isEqualTo(workflowsBefore);
+    }
+
+    @Test
+    void aMalformedRefusalIsRepairedInsteadOfAcceptedAsARefusal() {
+        String bad = "{\"refusal\":{\"reason\":\"cannot\",\"missing_capabilities\":{\"a\":\"x\"}}}";
+        String badItems = "{\"refusal\":{\"reason\":\"cannot\",\"missing_capabilities\":[42,\"\"]}}";
+        String good = "{\"refusal\":{\"reason\":\"cannot\",\"missing_capabilities\":[\"crm\"]}}";
+        model.responder = r -> r.messages().size() == 1 ? bad : r.messages().size() == 3 ? badItems : good;
+        Reply r = compile("update salesforce");
+        assertThat(r.status()).isEqualTo(200);
+        assertThat(r.body().path("attempts").asInt()).isEqualTo(3);
+        assertThat(r.body().path("refusal").path("missing_capabilities").get(0).asText()).isEqualTo("crm");
     }
 
     @Test

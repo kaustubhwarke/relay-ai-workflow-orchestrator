@@ -104,11 +104,18 @@ public class NlCompilerService {
                 JsonNode r = root.get("refusal");
                 String reason = r.path("reason").asText("").strip();
                 List<String> missing = new ArrayList<>();
-                r.path("missing_capabilities").forEach(m -> missing.add(m.asText()));
-                if (!reason.isEmpty() && !missing.isEmpty()) {
+                JsonNode mc = r.path("missing_capabilities");
+                boolean wellFormed = mc.isArray();
+                if (wellFormed) {
+                    for (JsonNode m : mc) {
+                        if (!m.isTextual() || m.asText().isBlank()) { wellFormed = false; break; }
+                        missing.add(m.asText().strip());
+                    }
+                }
+                if (!reason.isEmpty() && wellFormed && !missing.isEmpty()) {
                     return new Result(null, new Refusal(reason, missing), reason, attempt, List.of(), null, null);
                 }
-                problems.add("A refusal must include a non-empty 'reason' and a non-empty 'missing_capabilities' array.");
+                problems.add("A refusal must include a non-empty 'reason' and 'missing_capabilities' as a non-empty array of non-empty strings.");
             } else if (root.has("workflow") && root.get("workflow").isObject()) {
                 Normalized n = normalize((ObjectNode) root.get("workflow").deepCopy());
                 DefinitionValidator.Result v = validator.validate(n.definition(), true);
@@ -148,6 +155,7 @@ public class NlCompilerService {
 
     /** Gives the draft a safe unique id, a freshly generated webhook secret and default limits. */
     private Normalized normalize(ObjectNode def) {
+        coerceScalarsForStringParams(def);
         String id = def.path("id").asText("");
         if (!DefinitionValidator.isValidId(id) || !id.startsWith("wf_")) id = "wf_nl_" + shortId();
         if (workflowRepo.exists(id)) id = id + "_" + shortId().substring(0, 4);
@@ -166,6 +174,25 @@ public class NlCompilerService {
             ((ObjectNode) t).put("secret", secret);
         }
         return new Normalized(def, secret);
+    }
+
+    /**
+     * Models often write a number where the catalog declares a string (for example a condition's right-hand
+     * side). The validator is strict about types, so the compiler converts such scalars to text before validation.
+     */
+    private void coerceScalarsForStringParams(ObjectNode def) {
+        for (JsonNode node : def.path("nodes")) {
+            NodeCatalog.NodeType type = catalog.nodeType(node.path("type").asText()).orElse(null);
+            JsonNode params = node.path("params");
+            if (type == null || !params.isObject()) continue;
+            ObjectNode p = (ObjectNode) params;
+            for (NodeCatalog.ParamSpec spec : type.params().values()) {
+                JsonNode v = p.get(spec.name());
+                if ("string".equals(spec.type()) && v != null && (v.isNumber() || v.isBoolean())) {
+                    p.put(spec.name(), v.asText());
+                }
+            }
+        }
     }
 
     private WorkflowRecord persistDraft(Normalized n) {

@@ -51,16 +51,31 @@ public class SeedLoader implements ApplicationRunner {
         int loaded = 0;
         for (JsonNode def : root.path("workflows")) {
             String id = def.path("id").asText();
-            if (workflows.exists(id)) continue;
+            if (workflows.exists(id)) {
+                finishPartialSeed(id);
+                continue;
+            }
             try {
                 workflowService.create(def);
-                workflowService.publish(id);
-                loaded++;
-            } catch (RelayException | DuplicateKeyException e) {
-                // another instance seeded it first (rolling start of several replicas): that is fine
+            } catch (DuplicateKeyException e) {
                 log.info("Seed workflow {} was created concurrently by another instance", id);
+                continue;
+            } catch (RelayException e) {
+                if (!"workflow_exists".equals(e.code())) throw e; // only a duplicate id is the benign race
+                log.info("Seed workflow {} was created concurrently by another instance", id);
+                continue;
             }
+            workflowService.publish(id);
+            loaded++;
         }
         log.info("Seed workflows: {} loaded as published, {} already present", loaded, root.path("workflows").size() - loaded);
+    }
+
+    /** A seed created by an earlier start that stopped before publishing is completed instead of being left as a draft. */
+    private void finishPartialSeed(String id) {
+        if (workflows.findById(id).map(w -> !w.hasPublishedVersion()).orElse(false)) {
+            workflowService.publish(id);
+            log.info("Seed workflow {} was found unpublished and has been published", id);
+        }
     }
 }

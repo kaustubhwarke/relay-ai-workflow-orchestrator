@@ -41,12 +41,19 @@ class ApiContractIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void triggerReturnsPromptlyWithAQueuedRun() {
-        String id = createAndPublish(TestSupport.minimalWorkflow("wf_it_async"));
+    void triggerReturnsPromptlyWhileTheRunIsStillInProgress() {
+        // a 3-second delay proves the call returned before execution could possibly have finished
+        String id = createAndPublish("""
+                {"id":"wf_it_async","name":"Async","trigger":{"type":"manual"},"entry":"wait",
+                 "nodes":[{"id":"wait","type":"delay","params":{"seconds":3},"next":null}]}""");
+        long started = System.nanoTime();
         Reply r = post("/workflows/" + id + "/trigger", "{\"input\":{}}");
+        long tookMs = (System.nanoTime() - started) / 1_000_000;
         assertThat(r.status()).isEqualTo(202);
-        assertThat(r.text("status")).isIn("queued", "running", "succeeded");
+        assertThat(r.text("status")).isIn("queued", "running");
         assertThat(r.body().has("run_id")).isTrue();
+        assertThat(tookMs).as("the request handler must not wait for the run").isLessThan(2500);
+        assertThat(get("/runs/" + r.text("run_id")).text("status")).isNotEqualTo("succeeded");
     }
 
     @Test
@@ -78,7 +85,9 @@ class ApiContractIT extends AbstractIntegrationTest {
                  "nodes":[{"id":"a","type":"nope","params":{},"next":null}]}""");
         assertThat(r.status()).isEqualTo(200);
         assertThat(r.body().path("valid").asBoolean()).isFalse();
-        assertThat(r.body().path("errors").size()).isGreaterThanOrEqualTo(2);
+        java.util.List<String> codes = new java.util.ArrayList<>();
+        r.body().path("errors").forEach(e -> codes.add(e.path("code").asText()));
+        assertThat(codes).contains("invalid_node_type", "entry_not_found");
         assertThat(get("/workflows/wf_dry").status()).isEqualTo(404);
     }
 

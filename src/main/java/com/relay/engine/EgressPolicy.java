@@ -47,7 +47,30 @@ public class EgressPolicy {
             throw new NodeExecutionException("egress_blocked",
                     "Host '" + host + "' is not on the http_request allow-list (relay.http.allowed-hosts)", false);
         }
+        rejectUnsafeAddresses(host);
         return uri;
+    }
+
+    /**
+     * The host name is on the allow-list, but what it resolves to is checked too: addresses that are never a
+     * legitimate target (the cloud metadata link-local range, wildcard, multicast) are refused even for an
+     * allowed name, so a DNS record cannot point the engine at them. Loopback and private ranges stay
+     * reachable because the allow-list is operator-controlled and the mock world itself lives there.
+     * Redirects are disabled in {@link ExternalHttpClient}, so a response cannot move the call elsewhere.
+     */
+    private static void rejectUnsafeAddresses(String host) {
+        java.net.InetAddress[] addresses;
+        try {
+            addresses = java.net.InetAddress.getAllByName(host);
+        } catch (java.net.UnknownHostException e) {
+            return; // not resolvable: the call itself fails as a dependency error
+        }
+        for (java.net.InetAddress a : addresses) {
+            if (a.isLinkLocalAddress() || a.isAnyLocalAddress() || a.isMulticastAddress()) {
+                throw new NodeExecutionException("egress_blocked",
+                        "Host '" + host + "' resolves to a link-local, wildcard or multicast address, which is never allowed", false);
+            }
+        }
     }
 
     public Set<String> allowedHosts() { return allowedHosts; }

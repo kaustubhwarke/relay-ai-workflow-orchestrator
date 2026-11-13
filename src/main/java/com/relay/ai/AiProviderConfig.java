@@ -2,6 +2,7 @@ package com.relay.ai;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.relay.config.RelayProperties;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -15,7 +16,7 @@ public class AiProviderConfig {
 
     @Bean
     public AiProvider aiProvider(RelayProperties props, ObjectMapper mapper) {
-        String provider = props.getAi().getProvider() == null ? "" : props.getAi().getProvider().toLowerCase();
+        String provider = props.getAi().getProvider() == null ? "" : props.getAi().getProvider().trim().toLowerCase(Locale.ROOT);
         return switch (provider) {
             case "openai" -> {
                 log.info("AI provider: OpenAI-compatible endpoint {} model {}", props.getAi().getBaseUrl(), props.getAi().getModel());

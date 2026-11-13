@@ -52,11 +52,16 @@ public final class TestSupport {
 
     /** A minimal valid manual workflow with a single notify node. */
     public static String minimalWorkflow(String id) {
-        return """
-                {"id":"%s","name":"Minimal","trigger":{"type":"manual"},"entry":"hello",
-                 "limits":{"max_steps":5,"timeout_seconds":60,"max_ai_tokens":0},
-                 "nodes":[{"id":"hello","type":"notify",
-                           "params":{"channel":"chat","to":"#t","message":"hi"},"next":null}]}
-                """.formatted(id);
+        // built as a JSON tree so any id (quotes, backslashes, newlines) is escaped correctly
+        com.fasterxml.jackson.databind.node.ObjectNode def = MAPPER.createObjectNode();
+        def.put("id", id).put("name", "Minimal");
+        def.putObject("trigger").put("type", "manual");
+        def.put("entry", "hello");
+        def.putObject("limits").put("max_steps", 5).put("timeout_seconds", 60).put("max_ai_tokens", 0);
+        com.fasterxml.jackson.databind.node.ObjectNode node = def.putArray("nodes").addObject();
+        node.put("id", "hello").put("type", "notify");
+        node.putObject("params").put("channel", "chat").put("to", "#t").put("message", "hi");
+        node.putNull("next");
+        return def.toString();
     }
 }

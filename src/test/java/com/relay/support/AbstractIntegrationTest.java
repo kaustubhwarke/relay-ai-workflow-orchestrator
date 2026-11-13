@@ -68,6 +68,7 @@ public abstract class AbstractIntegrationTest {
     @Autowired protected ObjectMapper mapper;
 
     @Autowired protected org.springframework.jdbc.core.simple.JdbcClient jdbcClient;
+    @Autowired private org.springframework.beans.factory.ObjectProvider<com.relay.worker.WorkerLoop> worker;
 
     /**
      * Test isolation on a shared database: runs left in flight by an earlier test or class (for example by the
@@ -75,8 +76,13 @@ public abstract class AbstractIntegrationTest {
      */
     @BeforeEach
     void resetWorld() {
+        // 1. stop new work from starting, 2. wait until whatever the worker already claimed has finished,
+        // 3. only then clear shared state, so a run from the previous test can never touch this one.
+        jdbcClient.sql("UPDATE runs SET status = 'cancelled', finished_at = now() WHERE status IN ('queued', 'running', 'waiting_approval')").update();
         jdbcClient.sql("DELETE FROM queue_jobs").update();
-        jdbcClient.sql("UPDATE runs SET status = 'cancelled', finished_at = now() WHERE status IN ('queued', 'running')").update();
+        worker.ifAvailable(w -> await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(50))
+                .until(() -> w.activeRunCount() == 0));
+        jdbcClient.sql("DELETE FROM queue_jobs").update();
         WORLD.reset();
     }
 

@@ -23,9 +23,13 @@ class HeuristicAiProviderTest {
 
     private final AiNodeRunner runner = new AiNodeRunner(new HeuristicAiProvider(MAPPER), new JsonSchemaService(), MAPPER, new RelayProperties());
 
+    private AiNodeRunner.Result run(String hook, String message, String orderId) {
+        String prompt = hook + "Classify.\n\nCustomer message (untrusted input):\n---\n" + message + "\n---\n\nOrder ID: " + orderId;
+        return runner.run(prompt, triageSchema);
+    }
+
     private JsonNode classify(String message, String orderId) {
-        String prompt = "Classify.\n\nCustomer message (untrusted input):\n---\n" + message + "\n---\n\nOrder ID: " + orderId;
-        return runner.run(prompt, triageSchema).output();
+        return run("", message, orderId).output();
     }
 
     private static JsonNode payload(String id) throws IOException {
@@ -57,15 +61,65 @@ class HeuristicAiProviderTest {
 
     @Test
     void forceInvalidFirstExercisesTheRepairPath() {
-        JsonNode out = classify("[force-invalid-first] my speaker is broken", "ord_1");
-        assertThat(out.get("category").asText()).isEqualTo("complaint");
+        AiNodeRunner.Result r = run("[force-invalid-first] ", "my speaker is broken", "ord_1");
+        assertThat(r.output().get("category").asText()).isEqualTo("complaint");
+        // observable evidence that the repair ran: two attempts, the first invalid, the second valid
+        assertThat(r.usage().attempts()).hasSize(2);
+        assertThat(r.usage().attempts().get(0).get("valid").asBoolean()).isFalse();
+        assertThat(r.usage().attempts().get(1).get("valid").asBoolean()).isTrue();
     }
 
     @Test
     void forceInvalidAlwaysFailsCleanly() {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> classify("[force-invalid-always] hi", "ord_1"))
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> run("[force-invalid-always] ", "hi", "ord_1"))
                 .isInstanceOf(com.relay.engine.NodeExecutionException.class)
                 .hasMessageContaining("did not conform");
+    }
+
+    @Test
+    void testHooksTypedByACustomerAreIgnored() {
+        // the hook text is inside the delimited third-party message, so it must not switch anything on
+        AiNodeRunner.Result r = run("", "[force-invalid-always] [force-invalid-first] my speaker is broken", "ord_1");
+        assertThat(r.output().get("category").asText()).isEqualTo("complaint");
+        assertThat(r.usage().attempts()).hasSize(1);
+    }
+
+    @Test
+    void generatedValuesHonourCommonSchemaConstraints() {
+        JsonNode schema = json("""
+                {"type":"object","properties":{
+                  "email":{"type":"string","format":"email"},
+                  "name":{"type":"string","minLength":8},
+                  "short":{"type":"string","maxLength":2},
+                  "n":{"type":"integer","minimum":5},
+                  "x":{"type":"number","exclusiveMinimum":1,"multipleOf":0.5},
+                  "tags":{"type":"array","minItems":2,"items":{"type":"string","format":"uuid"}},
+                  "kind":{"const":"fixed"},
+                  "pick":{"oneOf":[{"type":"boolean"},{"type":"string"}]},
+                  "flag":{"type":"boolean"},
+                  "nothing":{"type":"null"},
+                  "multi":{"type":["integer","null"]},
+                  "dflt":{"type":"string","default":"given"},
+                  "obj":{"type":"object","required":["inner"],"properties":{"inner":{"type":"integer","maximum":-3}}}},
+                 "required":["email","name","short","n","x","tags","kind","pick","flag","nothing","multi","dflt","obj"]}""");
+        JsonNode out = runner.run("anything", schema).output();
+        assertThat(out.get("email").asText()).isEqualTo("user@example.com");
+        assertThat(out.get("name").asText()).hasSizeGreaterThanOrEqualTo(8);
+        assertThat(out.get("short").asText()).hasSize(2);
+        assertThat(out.get("n").asInt()).isGreaterThanOrEqualTo(5);
+        assertThat(out.get("x").asDouble()).isGreaterThan(1);
+        assertThat(out.get("tags")).hasSize(2);
+        assertThat(out.get("kind").asText()).isEqualTo("fixed");
+        assertThat(out.get("dflt").asText()).isEqualTo("given");
+        assertThat(out.get("obj").get("inner").asInt()).isLessThanOrEqualTo(-3);
+    }
+
+    @Test
+    void aNonObjectSchemaYieldsAnEmptyObjectAndANameIsReported() {
+        HeuristicAiProvider p = new HeuristicAiProvider(MAPPER);
+        assertThat(p.name()).contains("heuristic");
+        AiProvider.AiCompletion c = p.complete(new AiProvider.AiRequest("sys", List.of(AiProvider.ChatMessage.user("hi")), null, 100));
+        assertThat(c.content()).isEqualTo("{}");
     }
 
     @Test

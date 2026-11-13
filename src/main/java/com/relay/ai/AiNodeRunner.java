@@ -4,9 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.relay.domain.AiUsage;
 import com.relay.config.RelayProperties;
 import com.relay.engine.NodeExecutionException;
-import com.relay.repository.StepRepository;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
@@ -44,7 +44,7 @@ public class AiNodeRunner {
         this.props = props;
     }
 
-    public record Result(JsonNode output, StepRepository.AiUsage usage) {}
+    public record Result(JsonNode output, AiUsage usage) {}
 
     public String providerName() { return provider.name(); }
 
@@ -63,6 +63,7 @@ public class AiNodeRunner {
                 completion = provider.complete(new AiProvider.AiRequest(system, List.copyOf(messages), outputSchema,
                         props.getAi().getMaxOutputTokens()));
             } catch (AiProviderException e) {
+                attemptLog.add(failedAttemptEntry(attempt, e));
                 throw new NodeExecutionException(e.code(), e.getMessage(), e.isRetryable(),
                         usage(promptTokens, completionTokens, attemptLog), e);
             }
@@ -88,6 +89,19 @@ public class AiNodeRunner {
                 false, usage(promptTokens, completionTokens, attemptLog), null);
     }
 
+    /** A provider call that threw is still an attempt: it is recorded in the trace before the step fails. */
+    private ObjectNode failedAttemptEntry(int attempt, AiProviderException e) {
+        ObjectNode entry = mapper.createObjectNode();
+        entry.put("attempt", attempt);
+        entry.put("valid", false);
+        entry.putArray("errors").add("provider call failed: " + e.code());
+        entry.put("prompt_tokens", 0);
+        entry.put("completion_tokens", 0);
+        entry.put("model", provider.name());
+        entry.put("output_excerpt", "");
+        return entry;
+    }
+
     private ObjectNode logEntry(int attempt, List<String> errors, AiProvider.AiCompletion c) {
         ObjectNode e = mapper.createObjectNode();
         e.put("attempt", attempt);
@@ -103,32 +117,32 @@ public class AiNodeRunner {
         return e;
     }
 
-    private StepRepository.AiUsage usage(int p, int c, ArrayNode log) {
-        return new StepRepository.AiUsage(p, c, log.deepCopy());
+    private AiUsage usage(int p, int c, ArrayNode log) {
+        return new AiUsage(p, c, log.deepCopy());
     }
 
-    /** Parses model text as JSON, tolerating markdown code fences and surrounding prose. */
+    /**
+     * Parses model text as exactly one JSON value. A response that is a single markdown-fenced block is
+     * unwrapped; anything else (prose around the JSON, a second value after it) is not a valid response and
+     * goes through the repair retry instead of being guessed at.
+     */
     JsonNode parseJson(String text) {
         if (text == null) return null;
         String t = text.trim();
-        if (t.startsWith("```")) {
+        if (t.startsWith("```") && t.endsWith("```") && t.length() > 6) {
             int firstNl = t.indexOf('\n');
-            int lastFence = t.lastIndexOf("```");
-            if (firstNl > 0 && lastFence > firstNl) t = t.substring(firstNl + 1, lastFence).trim();
+            if (firstNl > 0 && t.lastIndexOf("```") > firstNl) t = t.substring(firstNl + 1, t.length() - 3).trim();
         }
-        JsonNode n = tryParse(t);
-        if (n == null) {
-            int a = t.indexOf('{');
-            int b = t.lastIndexOf('}');
-            if (a >= 0 && b > a) n = tryParse(t.substring(a, b + 1));
-        }
-        return n;
+        return tryParse(t);
     }
 
     private JsonNode tryParse(String s) {
         try {
-            return mapper.readTree(s);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            JsonNode n = mapper.readerFor(JsonNode.class)
+                    .with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readValue(s);
+            return n == null || n.isMissingNode() ? null : n;
+        } catch (java.io.IOException e) {
             return null;
         }
     }

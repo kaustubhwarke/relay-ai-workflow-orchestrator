@@ -3,6 +3,7 @@ package com.relay.engine;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.relay.domain.AiUsage;
 import com.relay.config.RelayProperties;
 import com.relay.definition.NodeCatalog;
 import com.relay.definition.WorkflowDefinition;
@@ -195,10 +196,14 @@ public class RunExecutor {
                 return Outcome.FINISHED;
             }
 
+            // The new step's sequence comes from the same snapshot as the cursor, never from a fresh read: if another
+            // executor advanced the run in between, this insert collides on UNIQUE (run_id, sequence) and yields,
+            // instead of appending a second copy of a node (with a different visit count and idempotency key).
+            int nextSequence = lastOpt.map(l -> l.sequence() + 1).orElse(1);
             Flow flow = switch (node.type()) {
-                case "approval" -> executeApproval(run, node);
-                case "delay" -> executeDelay(run, node, resume);
-                default -> executeStandard(run, def, node, resume, lease);
+                case "approval" -> executeApproval(run, node, nextSequence);
+                case "delay" -> executeDelay(run, node, resume, nextSequence);
+                default -> executeStandard(run, def, node, resume, lease, nextSequence);
             };
             switch (flow) {
                 case CONTINUE -> { /* next iteration */ }
@@ -236,7 +241,7 @@ public class RunExecutor {
     // ------------------------------------------------------------------ standard nodes
 
     private Flow executeStandard(RunRecord run, WorkflowDefinition def, WorkflowDefinition.Node node,
-                                 StepRecord resume, WorkerLease lease) {
+                                 StepRecord resume, WorkerLease lease, int nextSequence) {
         String runId = run.id();
         NodeCatalog.NodeType type = catalog.nodeType(node.type()).orElse(null);
         NodeExecutor executor = executors.get(node.type());
@@ -251,7 +256,7 @@ public class RunExecutor {
             sequence = resume.sequence();
             key = resume.idempotencyKey();
         } else {
-            sequence = steps.nextSequence(runId);
+            sequence = nextSequence;
             key = type.sideEffect() ? idempotencyKey(runId, node.id(), steps.nextVisit(runId, node.id())) : null;
             try {
                 int seq = sequence;
@@ -270,7 +275,7 @@ public class RunExecutor {
         try {
             resolved = resolveParams(run, node, type);
         } catch (TemplateException e) {
-            return failStep(run, node, sequence, 1, "template_error", e.getMessage(), StepRepository.AiUsage.NONE);
+            return failStep(run, node, sequence, 1, "template_error", e.getMessage(), AiUsage.NONE);
         }
         steps.updateResolvedInput(runId, sequence, redactForTrace(node, resolved));
 
@@ -279,7 +284,7 @@ public class RunExecutor {
             return failStep(run, node, sequence, 1, "approval_required",
                     "Node '" + node.id() + "' (" + node.type() + ") is sensitive and requires an approved approval node earlier in "
                             + "the run, but no approved approval exists. Execution refused.",
-                    StepRepository.AiUsage.NONE);
+                    AiUsage.NONE);
         }
 
         // ---- execute with retries
@@ -297,6 +302,9 @@ public class RunExecutor {
                     metrics.stepFinished(node.type(), "failed", System.currentTimeMillis() - started);
                     return failStep(run, node, sequence, attempt, e.code(), e.getMessage(), e.usage());
                 }
+                // a failed attempt may still have consumed tokens: count them so the cap and the reported usage are accurate
+                int spent = tokensOf(e.usage());
+                if (spent > 0) runs.addAiTokens(runId, spent);
                 long wait = retryPolicy.backoffMillis(rs, attempt);
                 log.warn("Node {} attempt {}/{} failed ({}); retrying in {} ms", node.id(), attempt, rs.maxAttempts(), e.code(), wait);
                 metrics.stepRetried(node.type());
@@ -310,12 +318,25 @@ public class RunExecutor {
                 log.error("Unexpected error executing node {} of run {}", node.id(), runId, e);
                 metrics.stepFinished(node.type(), "failed", System.currentTimeMillis() - started);
                 return failStep(run, node, sequence, attempt, "internal_error",
-                        "Internal error while executing the node (" + e.getClass().getSimpleName() + ")", StepRepository.AiUsage.NONE);
+                        "Internal error while executing the node (" + e.getClass().getSimpleName() + ")", AiUsage.NONE);
             }
 
             // Persistence is deliberately outside the try block above: a database failure here must not be
             // mistaken for a node failure. It propagates to the worker, the lease expires, and the run is
             // resumed (the side effect, if it landed, is absorbed by its idempotency key).
+            int stepTokens = tokensOf(outcome.ai());
+            int tokenLimit = def.limits().maxAiTokens();
+            if (tokenLimit > 0 && stepTokens > 0) {
+                // the cap covers this invocation too: an AI step that takes the run over its budget fails and
+                // its output is never passed downstream (the tokens it used are still recorded)
+                int already = runs.findById(runId).map(RunRecord::aiTokensUsed).orElse(run.aiTokensUsed());
+                if (already + stepTokens > tokenLimit) {
+                    metrics.stepFinished(node.type(), "failed", System.currentTimeMillis() - started);
+                    return failStep(run, node, sequence, attempt, "max_ai_tokens_exceeded",
+                            "max_ai_tokens cap (" + tokenLimit + ") exceeded: this AI step used " + stepTokens
+                                    + " tokens, bringing the run to " + (already + stepTokens), outcome.ai());
+                }
+            }
             final int finalAttempt = attempt;
             tx.executeWithoutResult(s -> {
                 steps.markSucceeded(runId, sequence, outcome.output(), finalAttempt, outcome.ai());
@@ -375,9 +396,9 @@ public class RunExecutor {
 
     // ------------------------------------------------------------------ approval / delay nodes
 
-    private Flow executeApproval(RunRecord run, WorkflowDefinition.Node node) {
+    private Flow executeApproval(RunRecord run, WorkflowDefinition.Node node, int nextSequence) {
         String runId = run.id();
-        int sequence = steps.nextSequence(runId);
+        int sequence = nextSequence;
         String message;
         try {
             message = templates.resolveToString(node.params().path("message").asText(), context(run));
@@ -404,14 +425,14 @@ public class RunExecutor {
         return Flow.WAITING_APPROVAL;
     }
 
-    private Flow executeDelay(RunRecord run, WorkflowDefinition.Node node, StepRecord resume) {
+    private Flow executeDelay(RunRecord run, WorkflowDefinition.Node node, StepRecord resume, int nextSequence) {
         String runId = run.id();
         if (resume != null) { // zero-length delay interrupted mid-step
-            steps.markSucceeded(runId, resume.sequence(), F.objectNode(), 1, StepRepository.AiUsage.NONE);
+            steps.markSucceeded(runId, resume.sequence(), F.objectNode(), 1, AiUsage.NONE);
             return Flow.CONTINUE;
         }
         JsonNode secondsNode = node.params().get("seconds");
-        int sequence = steps.nextSequence(runId);
+        int sequence = nextSequence;
         if (secondsNode == null || !secondsNode.isNumber() || secondsNode.asDouble() < 0 || secondsNode.asDouble() > MAX_DELAY_SECONDS) {
             return failNewStep(run, node, sequence, "invalid_param_value",
                     "delay 'seconds' must be a number between 0 and " + MAX_DELAY_SECONDS);
@@ -424,7 +445,7 @@ public class RunExecutor {
                 tx.executeWithoutResult(s -> {
                     steps.insert(runId, sequence, node.id(), node.type(), StepStatus.RUNNING, null, null, null, input);
                     runs.bumpStepCounter(runId, node.id());
-                    steps.markSucceeded(runId, sequence, F.objectNode(), 1, StepRepository.AiUsage.NONE);
+                    steps.markSucceeded(runId, sequence, F.objectNode(), 1, AiUsage.NONE);
                 });
                 return Flow.CONTINUE;
             }
@@ -445,14 +466,20 @@ public class RunExecutor {
     // ------------------------------------------------------------------ terminal transitions
 
     private Flow failStep(RunRecord run, WorkflowDefinition.Node node, int sequence, int attempt,
-                          String code, String message, StepRepository.AiUsage usage) {
+                          String code, String message, AiUsage usage) {
         tx.executeWithoutResult(s -> {
             steps.markFailed(run.id(), sequence, message, code, attempt, usage);
-            int tokens = (usage.promptTokens() == null ? 0 : usage.promptTokens()) + (usage.completionTokens() == null ? 0 : usage.completionTokens());
+            int tokens = tokensOf(usage);
             if (tokens > 0) runs.addAiTokens(run.id(), tokens);
         });
         failRun(run, code, message, node.id(), sequence);
         return Flow.RUN_FINISHED;
+    }
+
+    private static int tokensOf(AiUsage usage) {
+        if (usage == null) return 0;
+        return (usage.promptTokens() == null ? 0 : usage.promptTokens())
+                + (usage.completionTokens() == null ? 0 : usage.completionTokens());
     }
 
     /** Records a failure for a node that has no step row yet (so the trace still shows what went wrong). */
@@ -461,7 +488,7 @@ public class RunExecutor {
             tx.executeWithoutResult(s -> {
                 steps.insert(run.id(), sequence, node.id(), node.type(), StepStatus.RUNNING, null, null, null, null);
                 runs.bumpStepCounter(run.id(), node.id());
-                steps.markFailed(run.id(), sequence, message, code, 1, StepRepository.AiUsage.NONE);
+                steps.markFailed(run.id(), sequence, message, code, 1, AiUsage.NONE);
             });
         } catch (DuplicateKeyException e) {
             return Flow.LEASE_LOST;
@@ -495,7 +522,7 @@ public class RunExecutor {
             approvals.cancelPendingForRun(run.id());
             steps.findLast(run.id()).ifPresent(last -> {
                 if (last.status() == StepStatus.RUNNING) {
-                    steps.markFailed(run.id(), last.sequence(), "Cancelled before completion", "cancelled", last.attempt(), StepRepository.AiUsage.NONE);
+                    steps.markFailed(run.id(), last.sequence(), "Cancelled before completion", "cancelled", last.attempt(), AiUsage.NONE);
                 }
             });
             if (runs.finish(run.id(), RunStatus.CANCELLED, null, reason)) metrics.runFinished(RunStatus.CANCELLED);

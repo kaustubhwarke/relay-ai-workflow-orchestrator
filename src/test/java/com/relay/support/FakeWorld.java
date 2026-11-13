@@ -28,8 +28,11 @@ public final class FakeWorld implements AutoCloseable {
     private static final ObjectMapper M = new ObjectMapper();
 
     private final HttpServer server;
+    private final java.util.concurrent.ExecutorService executor = Executors.newCachedThreadPool();
     private final List<Entry> ledger = new CopyOnWriteArrayList<>();
     private final Map<String, int[]> idempotentStatus = new ConcurrentHashMap<>();
+    /** What each idempotency key was first used for (action, path, payload): reuse for something else is a conflict. */
+    private final Map<String, String> idempotentFingerprint = new ConcurrentHashMap<>();
     private final Map<String, String> idempotentBody = new ConcurrentHashMap<>();
     private final Map<String, ObjectNode> orders = new ConcurrentHashMap<>();
     private final AtomicInteger seq = new AtomicInteger();
@@ -48,7 +51,7 @@ public final class FakeWorld implements AutoCloseable {
 
     private FakeWorld() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.setExecutor(Executors.newCachedThreadPool());
+        server.setExecutor(executor);
         server.createContext("/", this::handle);
         server.start();
         resetOrders();
@@ -60,6 +63,7 @@ public final class FakeWorld implements AutoCloseable {
         ledger.clear();
         idempotentStatus.clear();
         idempotentBody.clear();
+        idempotentFingerprint.clear();
         seq.set(0);
         failuresLeft.set(0);
         down = false;
@@ -133,7 +137,17 @@ public final class FakeWorld implements AutoCloseable {
                 respond(ex, 404, "{\"error\":{\"message\":\"no such route\"}}");
                 return;
             }
+            if (!method.equals("POST")) { // every side-effect route is POST-only
+                respond(ex, 405, "{\"error\":{\"message\":\"method not allowed\"}}");
+                return;
+            }
+            String fingerprint = action + " " + path + " " + payload;
             synchronized (this) {
+                if (key != null && idempotentFingerprint.containsKey(key) && !idempotentFingerprint.get(key).equals(fingerprint)) {
+                    ledger.add(new Entry(seq.incrementAndGet(), action, key, false, 422, payload));
+                    respond(ex, 422, "{\"error\":{\"message\":\"idempotency key reused for a different request\"}}");
+                    return;
+                }
                 if (key != null && idempotentBody.containsKey(key)) {
                     ledger.add(new Entry(seq.incrementAndGet(), action, key, true, idempotentStatus.get(key)[0], payload));
                     respond(ex, idempotentStatus.get(key)[0], idempotentBody.get(key));
@@ -145,6 +159,7 @@ public final class FakeWorld implements AutoCloseable {
                 if (key != null && status[0] < 300) {
                     idempotentStatus.put(key, new int[] {status[0]});
                     idempotentBody.put(key, body);
+                    idempotentFingerprint.put(key, fingerprint);
                 }
                 respond(ex, status[0], body);
             }
@@ -198,6 +213,10 @@ public final class FakeWorld implements AutoCloseable {
                 return "{\"status\":\"refunded\",\"reference_id\":\"ref_" + UUID.randomUUID().toString().substring(0, 8) + "\"}";
             }
             default -> {
+                if (!orders.containsKey(path.split("/")[2])) {
+                    status[0] = 404;
+                    return "{\"error\":{\"message\":\"Unknown order\"}}";
+                }
                 status[0] = 201;
                 return "{\"status\":\"replacement_created\",\"reference_id\":\"rpl_" + UUID.randomUUID().toString().substring(0, 8) + "\"}";
             }
@@ -213,5 +232,8 @@ public final class FakeWorld implements AutoCloseable {
     }
 
     @Override
-    public void close() { server.stop(0); }
+    public void close() {
+        server.stop(0);
+        executor.shutdownNow();
+    }
 }

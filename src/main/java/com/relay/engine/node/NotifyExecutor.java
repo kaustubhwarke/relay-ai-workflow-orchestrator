@@ -29,6 +29,12 @@ public class NotifyExecutor implements NodeExecutor {
         String channel = p.path("channel").asText();
         String to = TemplateResolver.render(p.get("to"));
         String message = TemplateResolver.render(p.get("message"));
+        if (to == null || to.isBlank()) {
+            throw new NodeExecutionException("invalid_param_value", "notify 'to' resolved to an empty recipient", false);
+        }
+        if (message == null || message.isBlank()) {
+            throw new NodeExecutionException("invalid_param_value", "notify 'message' resolved to an empty message", false);
+        }
         ObjectNode body = JsonNodeFactory.instance.objectNode();
         String path;
         switch (channel) {

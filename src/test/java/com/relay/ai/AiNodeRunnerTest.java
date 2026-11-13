@@ -117,13 +117,56 @@ class AiNodeRunnerTest {
     }
 
     @Test
-    void markdownFencesAndSurroundingProseAreTolerated() {
+    void aSingleMarkdownFenceIsUnwrapped() {
         ScriptedProvider p = new ScriptedProvider()
                 .reply("```json\n{\"category\":\"question\",\"priority\":\"low\"}\n```", 5, 5);
-        assertThat(runner(p).run("x", SCHEMA).output().get("category").asText()).isEqualTo("question");
-        ScriptedProvider p2 = new ScriptedProvider()
-                .reply("Sure! {\"category\":\"question\",\"priority\":\"low\"} hope that helps", 5, 5);
-        assertThat(runner(p2).run("x", SCHEMA).output().get("category").asText()).isEqualTo("question");
+        AiNodeRunner.Result r = runner(p).run("x", SCHEMA);
+        assertThat(r.output().get("category").asText()).isEqualTo("question");
+        assertThat(r.usage().attempts()).hasSize(1);
+    }
+
+    @Test
+    void proseAroundTheJsonIsNotAcceptedAndGoesThroughTheRepairRetry() {
+        ScriptedProvider p = new ScriptedProvider()
+                .reply("Sure! {\"category\":\"question\",\"priority\":\"low\"} hope that helps", 5, 5)
+                .reply("{\"category\":\"question\",\"priority\":\"low\"}", 5, 5);
+        AiNodeRunner.Result r = runner(p).run("x", SCHEMA);
+        assertThat(r.usage().attempts().get(0).get("valid").asBoolean()).isFalse();
+        assertThat(r.usage().attempts().get(0).get("errors").get(0).asText()).contains("not a single valid JSON value");
+        assertThat(r.usage().attempts().get(1).get("valid").asBoolean()).isTrue();
+    }
+
+    @Test
+    void textAfterTheJsonValueIsRejectedEvenWhenTheValueItselfIsValid() {
+        ScriptedProvider p = new ScriptedProvider()
+                .reply("{\"category\":\"question\",\"priority\":\"low\"} unexpected text", 5, 5)
+                .reply("{\"category\":\"question\",\"priority\":\"low\"} {\"x\":1}", 5, 5);
+        assertThatThrownBy(() -> runner(p).run("x", SCHEMA)).isInstanceOf(NodeExecutionException.class)
+                .hasMessageContaining("did not conform");
+    }
+
+    @Test
+    void anEmptyOrNullResponseIsNotValidJson() {
+        ScriptedProvider p = new ScriptedProvider().reply("", 1, 1).reply(null, 1, 1);
+        assertThatThrownBy(() -> runner(p).run("x", SCHEMA)).isInstanceOf(NodeExecutionException.class);
+    }
+
+    @Test
+    void aFailedProviderCallIsRecordedInTheAttemptLogBeforeTheStepFails() {
+        ScriptedProvider p = new ScriptedProvider().fail(new AiProviderException("ai_provider_unavailable", "HTTP 503", true));
+        assertThatThrownBy(() -> runner(p).run("x", SCHEMA)).isInstanceOfSatisfying(NodeExecutionException.class, e -> {
+            assertThat(e.usage().attempts()).hasSize(1);
+            assertThat(e.usage().attempts().get(0).get("valid").asBoolean()).isFalse();
+            assertThat(e.usage().attempts().get(0).get("errors").get(0).asText()).contains("ai_provider_unavailable");
+        });
+    }
+
+    @Test
+    void providerExceptionMessagesAreSanitised() {
+        AiProviderException e = new AiProviderException("x", "failed with Authorization: Bearer sk-abcdef123456 and api_key=hunter2\nnext line", false);
+        assertThat(e.getMessage()).doesNotContain("sk-abcdef").doesNotContain("hunter2").doesNotContain("\n").contains("[REDACTED]");
+        assertThat(new AiProviderException("x", null, false).getMessage()).isEmpty();
+        assertThat(new AiProviderException("x", "a".repeat(1000), false).getMessage()).hasSizeLessThan(400);
     }
 
     @Test

@@ -22,8 +22,11 @@ public class OrderActionExecutor implements NodeExecutor {
 
     private final WorldClient world;
 
-    public OrderActionExecutor(WorldClient world) {
+    private final double maxRefundUsd;
+
+    public OrderActionExecutor(WorldClient world, com.relay.config.RelayProperties props) {
         this.world = world;
+        this.maxRefundUsd = props.getEngine().getMaxRefundUsd();
     }
 
     @Override
@@ -46,6 +49,12 @@ public class OrderActionExecutor implements NodeExecutor {
                 if (amount != null && !amount.isNull()) {
                     if (!amount.isNumber()) {
                         throw new NodeExecutionException("invalid_param_value", "amount_usd must be a number", false);
+                    }
+                    // the world also enforces the order total and its rejection surfaces as a failed step;
+                    // this is the engine-side range check before a financial action is sent at all
+                    if (amount.asDouble() <= 0 || amount.asDouble() > maxRefundUsd) {
+                        throw new NodeExecutionException("invalid_param_value",
+                                "amount_usd must be greater than 0 and at most " + maxRefundUsd, false);
                     }
                     body.set("amount_usd", amount);
                 }

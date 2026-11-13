@@ -23,7 +23,7 @@ public final class Views {
 
         public static WorkflowSummary of(WorkflowRecord w) {
             return new WorkflowSummary(w.id(), w.name(), w.status(), w.currentVersion(),
-                    !w.isPublished() && w.currentVersion() > 0,
+                    w.hasPublishedVersion() && !w.isPublished(),
                     w.definition().path("trigger").path("type").asText(null),
                     w.definition().path("nodes").size(), w.createdAt(), w.updatedAt(), w.publishedAt());
         }
@@ -35,7 +35,7 @@ public final class Views {
 
         public static WorkflowDetail of(WorkflowRecord w, List<String> warnings) {
             return new WorkflowDetail(w.id(), w.name(), w.description(), w.status(), w.currentVersion(),
-                    !w.isPublished() && w.currentVersion() > 0, w.definition(), w.createdAt(), w.updatedAt(), w.publishedAt(),
+                    w.hasPublishedVersion() && !w.isPublished(), w.definition(), w.createdAt(), w.updatedAt(), w.publishedAt(),
                     warnings == null || warnings.isEmpty() ? null : warnings);
         }
     }

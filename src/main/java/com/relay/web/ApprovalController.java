@@ -34,7 +34,9 @@ public class ApprovalController {
             @RequestParam(name = "run_id", required = false) String runIdSnake,
             @RequestParam(name = "limit", defaultValue = "100") int limit,
             @RequestParam(name = "offset", defaultValue = "0") int offset) {
-        return approvals.list(status, runId != null ? runId : runIdSnake, limit, offset).stream().map(Views.ApprovalView::of).toList();
+        int pageSize = Math.max(1, Math.min(limit, 200));
+        return approvals.list(status, runId != null ? runId : runIdSnake, pageSize, Math.max(0, offset))
+                .stream().map(Views.ApprovalView::of).toList();
     }
 
     @GetMapping("/{id}")

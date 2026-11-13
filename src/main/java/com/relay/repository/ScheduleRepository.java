@@ -31,7 +31,11 @@ public class ScheduleRepository {
         jdbc.sql("UPDATE schedules SET enabled = FALSE WHERE workflow_id = :w").param("w", workflowId).update();
     }
 
-    /** Locks due schedules for the surrounding transaction so exactly one scheduler instance fires each. */
+    /**
+     * Locks due schedules for the surrounding transaction so exactly one scheduler instance fires each. The lock
+     * only lives as long as that transaction, so a call without one is refused instead of silently unlocked.
+     */
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
     public List<DueSchedule> lockDue() {
         return jdbc.sql("""
                 SELECT workflow_id, cron FROM schedules

@@ -24,17 +24,29 @@ public class PrincipalRegistry {
     public PrincipalRegistry(RelayProperties props) {
         String demo = props.getSecurity().getApiToken();
         if (demo != null && !demo.isBlank()) {
-            entries.add(new Entry(digest(demo), new RelayPrincipal("demo",
+            add(new Entry(digest(demo), new RelayPrincipal("demo",
                     Set.of(RelayPrincipal.BUILDER, RelayPrincipal.OPERATOR, RelayPrincipal.APPROVER))));
         }
         for (RelayProperties.TokenPrincipal t : props.getSecurity().getTokens()) {
             if (t.getToken() == null || t.getToken().isBlank()) continue;
             Set<String> roles = t.getRoles().stream().map(r -> r.toUpperCase(Locale.ROOT)).collect(Collectors.toSet());
-            entries.add(new Entry(digest(t.getToken()), new RelayPrincipal(t.getName() == null ? "token" : t.getName(), roles)));
+            add(new Entry(digest(t.getToken()), new RelayPrincipal(t.getName() == null ? "token" : t.getName(), roles)));
         }
     }
 
+    /** A token that maps to two principals would get whichever was configured last, so it is a startup error. */
+    private void add(Entry entry) {
+        for (Entry existing : entries) {
+            if (MessageDigest.isEqual(existing.tokenDigest(), entry.tokenDigest())) {
+                throw new IllegalStateException("The same API token is configured for more than one principal ("
+                        + existing.principal().name() + ", " + entry.principal().name() + ")");
+            }
+        }
+        entries.add(entry);
+    }
+
     public Optional<RelayPrincipal> authenticate(String presentedToken) {
+        if (presentedToken == null) return Optional.empty();
         byte[] d = digest(presentedToken);
         RelayPrincipal match = null;
         for (Entry e : entries) { // no early exit: constant work regardless of which token matches

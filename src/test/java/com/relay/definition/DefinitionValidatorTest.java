@@ -62,17 +62,56 @@ class DefinitionValidatorTest {
     }
 
     @Test
-    void everyRejectionCaseHasADistinctMessage() {
+    void theThreeRequiredRejectionCasesHaveDistinctCodesAndMessages() {
         JsonNode unknownType = json("""
                 {"id":"x","name":"x","trigger":{"type":"manual"},"entry":"n1","nodes":[{"id":"n1","type":"teleport","params":{},"next":null}]}""");
         JsonNode missingParam = json("""
                 {"id":"x","name":"x","trigger":{"type":"manual"},"entry":"n1","nodes":[{"id":"n1","type":"notify","params":{"channel":"chat"},"next":null}]}""");
         JsonNode badRef = json("""
                 {"id":"x","name":"x","trigger":{"type":"manual"},"entry":"n1","nodes":[{"id":"n1","type":"delay","params":{"seconds":1},"next":"ghost"}]}""");
-        String a = validator.validate(unknownType, true).errors().get(0).message();
-        String b = validator.validate(missingParam, true).errors().get(0).message();
-        String c = validator.validate(badRef, true).errors().get(0).message();
-        assertThat(List.of(a, b, c)).doesNotHaveDuplicates();
+        DefinitionValidator.Issue a = validator.validate(unknownType, true).errors().get(0);
+        DefinitionValidator.Issue b = validator.validate(missingParam, true).errors().get(0);
+        DefinitionValidator.Issue c = validator.validate(badRef, true).errors().get(0);
+        assertThat(List.of(a.code(), b.code(), c.code())).containsExactly("invalid_node_type", "missing_required_param", "dangling_reference");
+        assertThat(List.of(a.message(), b.message(), c.message())).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void everyOtherRejectionCategoryIsReportedWithItsOwnCodeAndMessage() {
+        java.util.Map<String, String> byCode = new java.util.LinkedHashMap<>();
+        byCode.put("entry_not_found", """
+                {"id":"x","name":"x","trigger":{"type":"manual"},"entry":"nope","nodes":[{"id":"n1","type":"delay","params":{"seconds":1},"next":null}]}""");
+        byCode.put("invalid_param_type", """
+                {"id":"x","name":"x","trigger":{"type":"manual"},"entry":"n1","nodes":[{"id":"n1","type":"delay","params":{"seconds":"soon"},"next":null}]}""");
+        byCode.put("invalid_output_schema", """
+                {"id":"x","name":"x","trigger":{"type":"manual"},"entry":"n1","nodes":[{"id":"n1","type":"ai","params":{"prompt":"p","output_schema":{"type":"bogus"}},"next":null}]}""");
+        byCode.put("duplicate_node_id", """
+                {"id":"x","name":"x","trigger":{"type":"manual"},"entry":"n1","nodes":[{"id":"n1","type":"delay","params":{"seconds":1},"next":null},{"id":"n1","type":"delay","params":{"seconds":1},"next":null}]}""");
+        java.util.Set<String> messages = new java.util.HashSet<>();
+        byCode.forEach((code, def) -> {
+            DefinitionValidator.Result r = validator.validate(json(def), true);
+            assertThat(r.errors()).as(code).extracting(DefinitionValidator.Issue::code).contains(code);
+            r.errors().stream().filter(i -> i.code().equals(code)).forEach(i -> messages.add(i.message()));
+        });
+        assertThat(messages).hasSize(byCode.size());
+    }
+
+    @Test
+    void stringParamsMustBeTextAndIdsAndNamesMustBeText() {
+        JsonNode numericMessage = json("""
+                {"id":"x","name":"x","trigger":{"type":"manual"},"entry":"n1","nodes":[{"id":"n1","type":"notify","params":{"channel":"chat","to":"#t","message":42},"next":null}]}""");
+        assertThat(validator.validate(numericMessage, true).errors()).extracting(DefinitionValidator.Issue::code).contains("invalid_param_type");
+        JsonNode numericId = json("""
+                {"id":"x","name":7,"trigger":{"type":"manual"},"entry":"n1","nodes":[{"id":5,"type":"delay","params":{"seconds":1},"next":null}]}""");
+        assertThat(validator.validate(numericId, true).valid()).isFalse();
+    }
+
+    @Test
+    void idAndCronHelpersAreNullSafe() {
+        assertThat(DefinitionValidator.isValidId(null)).isFalse();
+        assertThat(DefinitionValidator.isValidCron(null)).isFalse();
+        assertThat(DefinitionValidator.isValidCron("*/5 * * * *")).isTrue();
+        assertThat(DefinitionValidator.isValidCron("nonsense")).isFalse();
     }
 
     @Test

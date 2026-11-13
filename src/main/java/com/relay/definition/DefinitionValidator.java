@@ -155,6 +155,7 @@ public class DefinitionValidator {
     }
 
     public static boolean isValidCron(String cron) {
+        if (cron == null) return false;
         String[] parts = cron.trim().split("\\s+");
         if (parts.length != 5) return false;
         try {
@@ -237,7 +238,7 @@ public class DefinitionValidator {
     private void checkParamType(String nodeId, String nodeType, NodeCatalog.ParamSpec p, JsonNode v, List<Issue> errors) {
         boolean templated = v.isTextual() && TEMPLATE.matcher(v.asText()).find();
         boolean ok = switch (p.type()) {
-            case "string" -> v.isTextual() || (v.isNumber() || v.isBoolean());
+            case "string" -> v.isTextual();
             case "number" -> v.isNumber() || templated;
             case "object" -> v.isObject() || templated;
             case "boolean" -> v.isBoolean() || templated;
@@ -325,7 +326,7 @@ public class DefinitionValidator {
 
     private static String text(JsonNode n, String field) {
         JsonNode v = n == null ? null : n.get(field);
-        return v == null || v.isNull() || !v.isValueNode() ? null : v.asText();
+        return v == null || !v.isTextual() ? null : v.asText();
     }
 
     private static boolean isBlank(String s) { return s == null || s.isBlank(); }

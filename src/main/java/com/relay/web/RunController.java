@@ -31,8 +31,10 @@ public class RunController {
             @RequestParam(name = "limit", defaultValue = "50") int limit,
             @RequestParam(name = "offset", defaultValue = "0") int offset) {
         String wf = workflowId != null ? workflowId : workflowIdSnake;
-        var items = runs.list(wf, status, limit, offset).stream().map(Views.RunSummary::of).toList();
-        return new Views.Page<>(items, runs.count(wf, status), Math.max(1, Math.min(limit, 200)), Math.max(0, offset));
+        int pageSize = Math.max(1, Math.min(limit, 200));
+        int start = Math.max(0, offset);
+        var items = runs.list(wf, status, pageSize, start).stream().map(Views.RunSummary::of).toList();
+        return new Views.Page<>(items, runs.count(wf, status), pageSize, start);
     }
 
     /** The full trace: every step with resolved input, output, attempts, timing and AI token usage. */

@@ -238,7 +238,21 @@ class EngineBehaviorIT extends AbstractIntegrationTest {
     }
 
     @Test
-    void wallClockCapExcludesNothingButApprovalWaitAndStopsSlowRuns() {
+    void timeSpentWaitingForAnApprovalDoesNotCountTowardsTheWallClockCap() throws Exception {
+        String id = createAndPublish(wf("wf_it_timeout_approval", "g", "{\"max_steps\":10,\"timeout_seconds\":2}", """
+                [{"id":"g","type":"approval","params":{"message":"ok to continue?"},"next":"n"},
+                 {"id":"n","type":"notify","params":{"channel":"chat","to":"#ops","message":"done"},"next":null}]"""));
+        String run = trigger(id, "{}");
+        awaitRun(run, "waiting_approval");
+        Thread.sleep(3500); // longer than the 2s cap: this wait must not be billed to the run
+        assertThat(post("/approvals/" + pendingApprovalFor(run) + "/approve", "{}").status()).isEqualTo(200);
+        JsonNode done = awaitTerminal(run);
+        assertThat(done.path("status").asText()).isEqualTo("succeeded");
+        assertThat(WORLD.executed("chat.message")).isEqualTo(1);
+    }
+
+    @Test
+    void wallClockCapStopsSlowRunsThatAreNotWaitingForAnApproval() {
         String id = createAndPublish(wf("wf_it_timeout", "d", "{\"max_steps\":10,\"timeout_seconds\":1}", """
                 [{"id":"d","type":"delay","params":{"seconds":2},"next":"n"},
                  {"id":"n","type":"notify","params":{"channel":"chat","to":"#ops","message":"late"},"next":null}]"""));
@@ -248,17 +262,43 @@ class EngineBehaviorIT extends AbstractIntegrationTest {
         assertThat(WORLD.ledger()).isEmpty();
     }
 
-    @Test
-    void aiTokenBudgetStopsFurtherAiNodes() {
-        String ai = "{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"string\"}},\"required\":[\"x\"]}";
-        String id = createAndPublish(wf("wf_it_tokens", "a1", "{\"max_steps\":10,\"max_ai_tokens\":5}", """
+    private static final String AI_SCHEMA = "{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"string\"}},\"required\":[\"x\"]}";
+
+    private static String twoAiNodes(String id, int maxTokens) {
+        return wf(id, "a1", "{\"max_steps\":10,\"max_ai_tokens\":" + maxTokens + "}", """
                 [{"id":"a1","type":"ai","params":{"prompt":"say something please","output_schema":%s},"next":"a2"},
-                 {"id":"a2","type":"ai","params":{"prompt":"again","output_schema":%s},"next":null}]""".formatted(ai, ai)));
+                 {"id":"a2","type":"ai","params":{"prompt":"again","output_schema":%s},"next":null}]""".formatted(AI_SCHEMA, AI_SCHEMA));
+    }
+
+    private int tokensOfStep(JsonNode run, String nodeId) {
+        JsonNode t = step(run, nodeId).path("tokens");
+        return t.path("prompt").asInt() + t.path("completion").asInt();
+    }
+
+    @Test
+    void anAiStepThatTakesTheRunOverItsTokenBudgetFailsAndItsOutputIsNeverUsed() {
+        String id = createAndPublish(twoAiNodes("wf_it_tokens", 5));
         JsonNode run = awaitTerminal(trigger(id, "{}"));
         assertThat(run.path("status").asText()).isEqualTo("failed");
         assertThat(run.path("error").path("code").asText()).isEqualTo("max_ai_tokens_exceeded");
+        assertThat(run.path("error").path("node_id").asText()).as("the first AI node already crosses a 5-token budget").isEqualTo("a1");
         assertThat(run.path("ai_tokens_used").asInt()).isGreaterThan(5);
         assertThat(step(run, "a1").path("tokens").path("prompt").asInt()).isGreaterThan(0);
+        assertThat(run.path("steps")).hasSize(1);
+    }
+
+    @Test
+    void theTokenBudgetAlsoStopsTheSecondAiNodeOnceTheTotalWouldExceedIt() {
+        JsonNode uncapped = awaitTerminal(trigger(createAndPublish(twoAiNodes("wf_it_tokens_probe", 0)), "{}"));
+        int first = tokensOfStep(uncapped, "a1");
+        assertThat(first).isGreaterThan(0);
+
+        String id = createAndPublish(twoAiNodes("wf_it_tokens2", first + first / 2)); // room for a1, not for a1 + a2
+        JsonNode run = awaitTerminal(trigger(id, "{}"));
+        assertThat(step(run, "a1").path("status").asText()).isEqualTo("succeeded");
+        assertThat(run.path("status").asText()).isEqualTo("failed");
+        assertThat(run.path("error").path("code").asText()).isEqualTo("max_ai_tokens_exceeded");
+        assertThat(run.path("error").path("node_id").asText()).isEqualTo("a2");
     }
 
     // ------------------------------------------------------------------ delays, cancel, snapshots

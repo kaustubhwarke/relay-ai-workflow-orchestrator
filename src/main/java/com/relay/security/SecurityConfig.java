@@ -34,12 +34,22 @@ public class SecurityConfig {
 
     @Bean
     public PrincipalRegistry principalRegistry(RelayProperties props, Environment env) {
-        boolean prod = java.util.Arrays.asList(env.getActiveProfiles()).contains("prod");
-        if (DEFAULT_DEMO_TOKEN.equals(props.getSecurity().getApiToken())) {
-            if (prod) {
-                throw new IllegalStateException("RELAY_API_TOKEN must be set to a non-default value in the prod profile");
+        java.util.List<String> profiles = java.util.Arrays.asList(env.getActiveProfiles());
+        boolean devOrTest = profiles.contains("dev") || profiles.contains("test");
+        String token = props.getSecurity().getApiToken();
+        boolean hasToken = token != null && !token.isBlank();
+        if (props.getApi().isEnabled()) {
+            if (!hasToken && props.getSecurity().getTokens().isEmpty()) {
+                throw new IllegalStateException(
+                        "No API credential is configured: set RELAY_API_TOKEN (or relay.security.tokens) to a secret value");
             }
-            log.warn("Using the default demo API token. Set RELAY_API_TOKEN before exposing this service.");
+            if (DEFAULT_DEMO_TOKEN.equals(token) && !devOrTest) {
+                throw new IllegalStateException(
+                        "The well-known demo token is only accepted with the 'dev' profile; set RELAY_API_TOKEN to a secret value");
+            }
+        }
+        if (DEFAULT_DEMO_TOKEN.equals(token)) {
+            log.warn("Using the demo API token (dev profile). Never expose this service like this.");
         }
         return new PrincipalRegistry(props);
     }

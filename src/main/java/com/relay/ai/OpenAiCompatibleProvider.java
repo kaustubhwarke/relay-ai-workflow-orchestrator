@@ -95,12 +95,30 @@ public class OpenAiCompatibleProvider implements AiProvider {
         }
         try {
             JsonNode root = mapper.readTree(resp.body());
-            String content = root.path("choices").path(0).path("message").path("content").asText("");
+            String content = contentOf(root.path("choices").path(0).path("message").path("content"));
+            if (content == null || content.isBlank()) {
+                throw new AiProviderException("ai_provider_empty_response",
+                        "Model provider returned no usable message content", true);
+            }
             JsonNode usage = root.path("usage");
             return new AiCompletion(content, usage.path("prompt_tokens").asInt(0), usage.path("completion_tokens").asInt(0),
                     root.path("model").asText(model));
         } catch (IOException e) {
             throw new AiProviderException("ai_provider_error", "Model provider returned an unreadable response", false, e);
         }
+    }
+
+    /** Message content is a string, or (on some compatible APIs) an array of typed parts; text parts are joined. */
+    private static String contentOf(JsonNode content) {
+        if (content.isTextual()) return content.asText();
+        if (content.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode part : content) {
+                if (part.isTextual()) sb.append(part.asText());
+                else if (part.path("text").isTextual()) sb.append(part.get("text").asText());
+            }
+            return sb.toString();
+        }
+        return null;
     }
 }

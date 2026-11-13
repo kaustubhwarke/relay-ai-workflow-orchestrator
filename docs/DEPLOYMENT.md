@@ -7,7 +7,9 @@
 | API + worker in one process (default) | `java -jar relay.jar` | local development, demos, small installs |
 | API only | `--spring.profiles.active=api` (or `RELAY_WORKER_ENABLED=false`) | stateless tier behind a load balancer |
 | Worker only | `--spring.profiles.active=worker` | scale execution independently; exposes only health and metrics on `PORT` (default 8081) |
-| Hardened | add `prod`: `--spring.profiles.active=prod,api` | refuses to start with the default demo token; disables Swagger, detailed health, and seeding |
+| Hardened | add `prod`: `--spring.profiles.active=prod,api` | refuses to start without a non-default RELAY_API_TOKEN; disables Swagger, detailed health, and seeding |
+
+**Running from an IDE or `java -jar`:** the API needs a credential, so set `RELAY_API_TOKEN` to a secret value, or add `--spring.profiles.active=dev` (IntelliJ: run configuration → Active profiles) to use the well-known demo token `relay-demo-token` on your own machine.
 
 All state is in PostgreSQL, so any mix of API and worker processes may run against one database. Workers coordinate through leased queue
 rows (`FOR UPDATE SKIP LOCKED`); running several is safe and is the default behaviour, not a special mode.
@@ -50,7 +52,7 @@ Every property can be set as an environment variable (Spring relaxed binding), e
 | Property (env) | Default | Meaning |
 |---|---|---|
 | `spring.datasource.url` (`RELAY_DB_URL`, `RELAY_DB_USER`, `RELAY_DB_PASSWORD`) | `jdbc:postgresql://localhost:5432/relay` | PostgreSQL; Flyway migrates on start |
-| `relay.security.api-token` (`RELAY_API_TOKEN`) | `relay-demo-token` | demo token with all roles; **must be changed in `prod`** |
+| `relay.security.api-token` (`RELAY_API_TOKEN`) | none (required) | token with all roles; the API refuses to start without one, and the well-known `relay-demo-token` only under the `dev` profile (used by Docker Compose) |
 | `relay.security.tokens[n].{name,token,roles}` | none | additional principals for role separation |
 | `relay.mock-world.url` / `timeout-ms` (`RELAY_MOCK_WORLD_URL`) | `http://localhost:9210` / 5000 | target of `notify` and `order_action`; also the seed workflows' base URL |
 | `relay.http.allowed-hosts` (`RELAY_HTTP_ALLOWED_HOSTS`) | empty | extra hosts `http_request` may call (SSRF allow-list); the mock-world host is always allowed |
@@ -60,7 +62,7 @@ Every property can be set as an environment variable (Spring relaxed binding), e
 | `relay.worker.lease-seconds` / `heartbeat-seconds` | 15 / 5 | queue lease and its renewal |
 | `relay.worker.max-claims` | 10 | a run claimed more often without finishing is quarantined as failed |
 | `relay.engine.default-max-attempts` / `backoff-base-ms` / `backoff-max-ms` | 4 / 500 / 10000 | retry policy (node-level `retry` overrides) |
-| `relay.engine.trace-store-ai-prompts` | `true` | store resolved prompts in traces; `false` stores only a hash and length |
+| `relay.engine.trace-store-ai-prompts` | `false` | opt in to storing resolved prompts in traces (the `dev` profile turns it on for the demo); `false` stores only a hash and length |
 | `relay.ai.provider` (`RELAY_AI_PROVIDER`) | `heuristic` | `openai` (any OpenAI-compatible endpoint) or `heuristic` |
 | `relay.ai.base-url` / `api-key` / `model` (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `RELAY_AI_MODEL`) | OpenRouter / empty / `openai/gpt-4o-mini` | model endpoint (OpenRouter, Groq, Gemini, Ollama, OpenAI) |
 | `relay.ai.timeout-ms` | 30000 | per model call |

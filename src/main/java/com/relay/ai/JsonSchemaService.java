@@ -24,6 +24,7 @@ public class JsonSchemaService {
         if (schema == null || !schema.isObject()) {
             throw new IllegalArgumentException("output_schema must be a JSON object");
         }
+        rejectRemoteReferences(schema);
         Set<ValidationMessage> metaErrors = metaSchema.validate(schema);
         if (!metaErrors.isEmpty()) {
             throw new IllegalArgumentException("output_schema is not a valid JSON Schema: "
@@ -35,6 +36,25 @@ public class JsonSchemaService {
             return compiled;
         } catch (RuntimeException e) {
             throw new IllegalArgumentException("output_schema is not a valid JSON Schema: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Schemas are author-supplied, so a reference must never make the validator fetch a URL: only in-document
+     * references (starting with '#') are allowed. This closes a server-side request path through the schema.
+     */
+    private static void rejectRemoteReferences(JsonNode node) {
+        if (node.isObject()) {
+            node.fields().forEachRemaining(e -> {
+                if (("$ref".equals(e.getKey()) || "$dynamicRef".equals(e.getKey()) || "$recursiveRef".equals(e.getKey()))
+                        && e.getValue().isTextual() && !e.getValue().asText().startsWith("#")) {
+                    throw new IllegalArgumentException("output_schema is not allowed to use remote references: "
+                            + e.getKey() + " must start with '#'");
+                }
+                rejectRemoteReferences(e.getValue());
+            });
+        } else if (node.isArray()) {
+            node.forEach(JsonSchemaService::rejectRemoteReferences);
         }
     }
 

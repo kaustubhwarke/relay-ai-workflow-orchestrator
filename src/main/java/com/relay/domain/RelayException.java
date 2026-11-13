@@ -16,8 +16,8 @@ public class RelayException extends RuntimeException {
 
     public RelayException(HttpStatus status, String code, String message, List<String> details) {
         super(message);
-        this.status = status;
-        this.code = code;
+        this.status = java.util.Objects.requireNonNull(status, "status");
+        this.code = java.util.Objects.requireNonNull(code, "code");
         this.details = details == null ? List.of() : List.copyOf(details);
     }
 

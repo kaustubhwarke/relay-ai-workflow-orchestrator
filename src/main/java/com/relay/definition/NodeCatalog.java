@@ -20,7 +20,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class NodeCatalog {
 
-    public record ParamSpec(String name, String type, boolean required, List<String> enumValues, boolean templatable) {}
+    public record ParamSpec(String name, String type, boolean required, List<String> enumValues, boolean templatable) {
+        public ParamSpec {
+            enumValues = List.copyOf(enumValues);
+        }
+    }
 
     public record NodeType(
             String type,
@@ -28,9 +32,18 @@ public class NodeCatalog {
             boolean sideEffect,
             boolean requiresApproval,
             Map<String, ParamSpec> params,
-            List<String> branches) {}
+            List<String> branches) {
+        public NodeType {
+            params = Collections.unmodifiableMap(new LinkedHashMap<>(params));
+            branches = List.copyOf(branches);
+        }
+    }
 
-    public record TriggerType(String type, String description, Map<String, ParamSpec> config) {}
+    public record TriggerType(String type, String description, Map<String, ParamSpec> config) {
+        public TriggerType {
+            config = Collections.unmodifiableMap(new LinkedHashMap<>(config));
+        }
+    }
 
     private final JsonNode raw;
     private final Map<String, NodeType> nodeTypes = new LinkedHashMap<>();
@@ -85,6 +98,6 @@ public class NodeCatalog {
 
     public Map<String, TriggerType> triggerTypes() { return Collections.unmodifiableMap(triggerTypes); }
 
-    /** The raw catalog document (served at GET /catalog and given to the NL compiler). */
-    public JsonNode raw() { return raw; }
+    /** A copy of the raw catalog document (served at GET /catalog and given to the NL compiler); the shared instance is never exposed. */
+    public JsonNode raw() { return raw.deepCopy(); }
 }

@@ -61,7 +61,7 @@ relay:
     url: ${RELAY_MOCK_WORLD_URL:http://localhost:9210}
     timeout-ms: 5000
   security:
-    api-token: ${RELAY_API_TOKEN:relay-demo-token}
+    api-token: ${RELAY_API_TOKEN:}
   worker:
     enabled: ${RELAY_WORKER_ENABLED:true}
     id: ${RELAY_WORKER_ID:}

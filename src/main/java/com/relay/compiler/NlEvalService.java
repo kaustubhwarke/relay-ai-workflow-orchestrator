@@ -142,6 +142,7 @@ public class NlEvalService {
         boolean branchingOk = true;
         if (assertions.path("requires_branching").asBoolean(false)) {
             branchingOk = parsed.nodes().values().stream().anyMatch(n -> n.isCondition() && n.onTrue() != null && n.onFalse() != null
+                    && !n.onTrue().equals(n.onFalse())
                     && parsed.node(n.onTrue()) != null && parsed.node(n.onFalse()) != null);
         }
         checks.put("branching", branchingOk);

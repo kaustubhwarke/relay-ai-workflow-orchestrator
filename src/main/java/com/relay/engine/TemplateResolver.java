@@ -117,7 +117,13 @@ public class TemplateResolver {
                 throw new TemplateException("Cannot resolve '{{" + path + "}}': '" + seg[i - 1] + "' is null or missing");
             }
             if (current.isArray() && seg[i].chars().allMatch(Character::isDigit)) {
-                current = current.get(Integer.parseInt(seg[i]));
+                int index;
+                try {
+                    index = Integer.parseInt(seg[i]);
+                } catch (NumberFormatException e) {
+                    throw new TemplateException("Cannot resolve '{{" + path + "}}': array index '" + seg[i] + "' is out of range");
+                }
+                current = current.get(index);
             } else if (current.isObject()) {
                 current = current.get(seg[i]);
             } else {

@@ -2,8 +2,8 @@ package com.relay.engine.node;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.relay.domain.AiUsage;
 import com.relay.engine.NodeExecutionException;
-import com.relay.repository.StepRepository;
 
 /**
  * Executes one node type. Implementations are stateless Spring beans discovered by the engine, so adding a
@@ -31,7 +31,7 @@ public interface NodeExecutor {
      */
     record NodeInvocation(String runId, String nodeId, ObjectNode params, String idempotencyKey, int attempt) {}
 
-    record NodeOutcome(JsonNode output, StepRepository.AiUsage ai) {
-        public static NodeOutcome of(JsonNode output) { return new NodeOutcome(output, StepRepository.AiUsage.NONE); }
+    record NodeOutcome(JsonNode output, AiUsage ai) {
+        public static NodeOutcome of(JsonNode output) { return new NodeOutcome(output, AiUsage.NONE); }
     }
 }

@@ -112,8 +112,10 @@ public class WorkflowService {
 
     /** Dry-run validation (POST /workflows/validate): nothing is stored. */
     public DefinitionValidator.Result validateOnly(JsonNode definition) {
+        // the redaction marker is a placeholder, not a usable secret: validation must agree with publish
         boolean hasSecret = definition != null && definition.path("trigger").path("secret").isTextual()
-                && !definition.path("trigger").path("secret").asText().isBlank();
+                && !definition.path("trigger").path("secret").asText().isBlank()
+                && !REDACTED.equals(definition.path("trigger").path("secret").asText());
         return validator.validate(definition, hasSecret);
     }
 
@@ -161,7 +163,8 @@ public class WorkflowService {
      */
     private String extractAndRedactSecret(ObjectNode definition, String existingHash) {
         JsonNode trigger = definition.get("trigger");
-        if (trigger == null || !trigger.isObject()) return existingHash;
+        // no trigger object means no webhook credential: never keep a stale hash for a trigger added back later
+        if (trigger == null || !trigger.isObject()) return null;
         ObjectNode t = (ObjectNode) trigger;
         JsonNode secret = t.get("secret");
         String hash = existingHash;

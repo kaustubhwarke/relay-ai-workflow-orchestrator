@@ -157,7 +157,7 @@ Everything is configured through environment variables or `application.yml`; the
 | Variable | Default | Purpose |
 |---|---|---|
 | `RELAY_DB_URL`, `RELAY_DB_USER`, `RELAY_DB_PASSWORD` | local Postgres | database |
-| `RELAY_API_TOKEN` | `relay-demo-token` | demo token (must be changed under the `prod` profile) |
+| `RELAY_API_TOKEN` | none (required) | API credential; the API refuses to start without one. The well-known `relay-demo-token` is accepted only with the `dev` profile (set by Docker Compose) |
 | `RELAY_MOCK_WORLD_URL` | `http://localhost:9210` | where `notify` / `order_action` / seed `http_request` nodes call |
 | `RELAY_AI_PROVIDER` | `heuristic` | `openai` for a real model |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `RELAY_AI_MODEL` | none, OpenRouter, `openai/gpt-4o-mini` | model endpoint |

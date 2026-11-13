@@ -44,6 +44,9 @@ public class WorldClient {
     private JsonNode interpret(ExternalHttpClient.Response resp, URI uri) {
         int s = resp.status();
         if (s >= 200 && s < 300) {
+            if (resp.body() == null || resp.body().isBlank()) {
+                return com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode(); // e.g. 204 No Content
+            }
             try {
                 return mapper.readTree(resp.body());
             } catch (JsonProcessingException e) {

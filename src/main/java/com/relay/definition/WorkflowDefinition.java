@@ -21,6 +21,13 @@ public final class WorkflowDefinition {
     public record RetrySpec(Integer maxAttempts, Long baseDelayMs, Long maxDelayMs) {}
 
     public record Node(String id, String type, ObjectNode params, String next, String onTrue, String onFalse, RetrySpec retry) {
+        /** The parameters are copied in and out so a caller cannot change the parsed definition. */
+        public Node {
+            params = params == null ? JsonNodeFactory.instance.objectNode() : params.deepCopy();
+        }
+
+        @Override public ObjectNode params() { return params.deepCopy(); }
+
         public boolean isCondition() { return "condition".equals(type); }
     }
 
@@ -37,7 +44,7 @@ public final class WorkflowDefinition {
         this.trigger = trigger;
         this.entry = entry;
         this.limits = limits;
-        this.nodes = nodes;
+        this.nodes = java.util.Collections.unmodifiableMap(nodes);
     }
 
     /** Parses a definition. Missing limits fall back to {@code defaultMaxSteps}. */
