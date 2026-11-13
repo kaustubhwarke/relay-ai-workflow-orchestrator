@@ -1,0 +1,98 @@
+# Relay: full local/production-like stack.
+#
+#   docker compose up -d --build                       # postgres + mock world + API + worker
+#   docker compose --profile scale up -d               # + a second worker (multi-worker lease demo)
+#   docker compose kill -s KILL relay-worker           # the kill-and-resume drill (then: docker compose start relay-worker)
+#
+# Configuration comes from the git-ignored .env file (see .env.example). Never commit real keys.
+name: relay
+
+x-relay-env: &relay-env
+  RELAY_DB_URL: jdbc:postgresql://postgres:5432/relay
+  RELAY_DB_USER: ${RELAY_DB_USER:-relay}
+  RELAY_DB_PASSWORD: ${RELAY_DB_PASSWORD:-relay}
+  RELAY_API_TOKEN: ${RELAY_API_TOKEN:-relay-demo-token}
+  RELAY_MOCK_WORLD_URL: http://mock-world:9210
+  RELAY_AI_PROVIDER: ${RELAY_AI_PROVIDER:-heuristic}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}
+  RELAY_AI_MODEL: ${RELAY_AI_MODEL:-openai/gpt-4o-mini}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: relay
+      POSTGRES_USER: ${RELAY_DB_USER:-relay}
+      POSTGRES_PASSWORD: ${RELAY_DB_PASSWORD:-relay}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RELAY_DB_USER:-relay} -d relay"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  mock-world:
+    image: python:3.12-alpine
+    command: ["python", "/scripts/mock_world.py", "--port", "9210"]
+    volumes:
+      - ./scripts:/scripts:ro
+    ports:
+      - "9210:9210"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9210/health | grep -q ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # REST API + console. Does not execute runs (the workers do).
+  relay-api:
+    build: .
+    container_name: relay-api
+    environment:
+      <<: *relay-env
+      RELAY_WORKER_ENABLED: "false"
+      RELAY_SEED_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      mock-world: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Worker: claims jobs with leases and executes runs. Kill it at any time; runs resume.
+  relay-worker:
+    build: .
+    container_name: relay-worker
+    environment:
+      <<: *relay-env
+      SPRING_PROFILES_ACTIVE: worker
+      RELAY_WORKER_ID: worker-1
+      PORT: "8081"
+    depends_on:
+      postgres: { condition: service_healthy }
+      mock-world: { condition: service_healthy }
+      relay-api: { condition: service_started }
+    restart: unless-stopped
+
+  relay-worker-2:
+    build: .
+    container_name: relay-worker-2
+    profiles: ["scale"]
+    environment:
+      <<: *relay-env
+      SPRING_PROFILES_ACTIVE: worker
+      RELAY_WORKER_ID: worker-2
+      PORT: "8081"
+    depends_on:
+      postgres: { condition: service_healthy }
+      relay-api: { condition: service_started }
+    restart: unless-stopped
+
+volumes:
+  pgdata:

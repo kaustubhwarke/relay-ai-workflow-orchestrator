@@ -1,0 +1,15 @@
+.git
+.github
+.idea
+.vscode
+target
+*.log
+.env
+.env.*
+docs
+verification
+README.md
+**/__pycache__
+*.mp4
+*.mov
+*.mkv

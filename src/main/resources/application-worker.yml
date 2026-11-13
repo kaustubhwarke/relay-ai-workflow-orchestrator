@@ -1,0 +1,15 @@
+# Worker-only deployment: executes runs, fires schedules, exposes no REST API (only health probes/metrics).
+#   java -jar relay.jar --spring.profiles.active=worker
+relay:
+  api:
+    enabled: false
+  worker:
+    enabled: true
+  seed:
+    enabled: false
+spring:
+  web:
+    resources:
+      add-mappings: false
+server:
+  port: ${PORT:8081}
