@@ -1,0 +1,82 @@
+# ---------- Secrets (NEVER commit) ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+secrets/
+application-local.yml
+application-local.properties
+
+# ---------- Build output ----------
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+*.log
+logs/
+hs_err_pid*
+replay_pid*
+dependency-reduced-pom.xml
+.flattened-pom.xml
+
+# ---------- Maven ----------
+.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+.mvn/.gradle-enterprise/
+
+# ---------- IDEs ----------
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.springBeans
+.sts4-cache/
+nbproject/
+.nb-gradle/
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+
+# ---------- Runtime / local data ----------
+pgdata/
+postgres-data/
+*.db
+*.sqlite
+*.pid
+tmp/
+.tmp/
+
+# ---------- Python (provided helper scripts) ----------
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---------- Test & coverage reports ----------
+coverage/
+*.exec
+/verification/output/
+node_modules/
+
+# ---------- Claude Code / agent local state ----------
+.claude/
+
+# Local recordings (too large for GitHub; share the video via a link instead)
+*.mp4
+*.mov
+*.mkv

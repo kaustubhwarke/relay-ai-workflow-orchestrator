@@ -1,0 +1,86 @@
+spring:
+  application:
+    name: relay
+  datasource:
+    url: ${RELAY_DB_URL:jdbc:postgresql://localhost:5432/relay}
+    username: ${RELAY_DB_USER:relay}
+    password: ${RELAY_DB_PASSWORD:relay}
+    hikari:
+      maximum-pool-size: ${RELAY_DB_POOL:20}
+      connection-timeout: 10000
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+  tomcat:
+    max-swallow-size: 2MB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+  metrics:
+    tags:
+      application: relay
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  pattern:
+    console: "%d{ISO8601} %-5level [%thread] [run=%X{runId:-}] [step=%X{nodeId:-}] %logger{36} - %msg%n"
+  level:
+    com.relay: INFO
+
+relay:
+  mock-world:
+    url: ${RELAY_MOCK_WORLD_URL:http://localhost:9210}
+    timeout-ms: 5000
+  security:
+    api-token: ${RELAY_API_TOKEN:}
+  worker:
+    enabled: ${RELAY_WORKER_ENABLED:true}
+    id: ${RELAY_WORKER_ID:}
+    concurrency: ${RELAY_WORKER_CONCURRENCY:1}
+    lease-seconds: ${RELAY_WORKER_LEASE_SECONDS:15}
+    heartbeat-seconds: 5
+  engine:
+    default-max-attempts: 4
+    backoff-base-ms: 500
+    backoff-max-ms: 10000
+  ai:
+    provider: ${RELAY_AI_PROVIDER:heuristic}
+    base-url: ${OPENAI_BASE_URL:https://openrouter.ai/api/v1}
+    api-key: ${OPENAI_API_KEY:}
+    model: ${RELAY_AI_MODEL:openai/gpt-4o-mini}
+    timeout-ms: 30000
+  http:
+    allowed-hosts: ${RELAY_HTTP_ALLOWED_HOSTS:}
+  scheduler:
+    enabled: true
+  seed:
+    enabled: ${RELAY_SEED_ENABLED:true}

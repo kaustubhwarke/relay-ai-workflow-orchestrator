@@ -1,0 +1,7 @@
+# API-only deployment: serves REST + console, enqueues runs, never executes them.
+#   java -jar relay.jar --spring.profiles.active=api
+relay:
+  api:
+    enabled: true
+  worker:
+    enabled: false

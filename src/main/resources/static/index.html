@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relay Console</title>
+  <link rel="stylesheet" href="/console/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Relay <span class="muted">AI Workflow Orchestrator</span></div>
+    <nav id="tabs">
+      <a href="#/workflows" data-tab="workflows">Workflows</a>
+      <a href="#/runs" data-tab="runs">Runs</a>
+      <a href="#/approvals" data-tab="approvals">Approvals <span id="pending-badge" class="badge hidden">0</span></a>
+    </nav>
+    <div class="auth">
+      <input id="token" type="password" placeholder="API token" autocomplete="off" aria-label="API token">
+      <button id="save-token" class="btn">Connect</button>
+    </div>
+  </header>
+
+  <section id="stats" class="stats" aria-live="polite"></section>
+  <main id="view" class="view"></main>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <dialog id="dialog"></dialog>
+
+  <script src="/console/app.js"></script>
+</body>
+</html>

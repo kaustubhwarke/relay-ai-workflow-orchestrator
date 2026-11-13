@@ -1,0 +1,18 @@
+# Production hardening (combine with api / worker profiles): --spring.profiles.active=prod,api
+# RELAY_API_TOKEN must be set to a non-default value or the application refuses to start.
+management:
+  endpoint:
+    health:
+      show-details: never
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+logging:
+  level:
+    root: WARN
+    com.relay: INFO
+relay:
+  seed:
+    enabled: false
